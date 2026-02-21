@@ -21,11 +21,20 @@ _LOGGER = logging.getLogger(__name__)
 class PSEGAutoLogin:
     """PSEG Long Island automated login using realistic browsing pattern."""
     
-    def __init__(self, email: str, password: str):
+    def __init__(
+        self,
+        email: str,
+        password: str,
+        mfa_code: Optional[str] = None,
+        mfa_method: str = "sms",  # "email" or "sms"
+        headless: bool = True,
+    ):
         """Initialize PSEG auto login."""
         self.email = email
         self.password = password
-        self.headless = True  # Must be headless in addon environment
+        self.mfa_code = mfa_code
+        self.mfa_method = mfa_method.lower() if mfa_method else "sms"
+        self.headless = headless
         self.playwright = None
         self.browser = None
         self.context = None
@@ -204,6 +213,16 @@ class PSEGAutoLogin:
         # Continue with the request
         await route.continue_()
     
+    def _log_mfa_error(self, current_url: str):
+        """Log clear error when MFA is required."""
+        _LOGGER.error("❌ PSEG now requires multi-factor authentication (MFA).")
+        _LOGGER.error("   After entering your password, you receive a verification code via email or SMS.")
+        _LOGGER.error("   This addon cannot complete MFA automatically.")
+        _LOGGER.error("   Workaround: Use the 'mfa_code' parameter when calling the addon API")
+        _LOGGER.error("   (check your email for the code, then retry with the code).")
+        _LOGGER.error("   Or log in manually in a browser and export cookies for the integration.")
+        _LOGGER.error(f"   Current URL: {current_url[:100]}...")
+    
     def parse_cookies(self, cookie_header: str):
         """Parse cookie header and extract important cookies."""
         try:
@@ -313,19 +332,159 @@ class PSEGAutoLogin:
             # Click the login button
             await login_submit_button.click()
             
+            # Wait for page to settle (either dashboard redirect or MFA challenge)
+            _LOGGER.info("🔄 Waiting for dashboard or MFA challenge...")
+            await asyncio.sleep(3.0)
+            
+            current_url = self.page.url
+            
+            # Check if we hit an MFA/verification challenge (PSEG added MFA in late 2024/early 2025)
+            if "id.myaccount.psegliny.com" in current_url and "dashboards" not in current_url:
+                page_content = await self.page.content()
+                mfa_indicators = [
+                    "verification code", "enter the code", "one-time",
+                    "multi-factor", "multi factor", "mfa", "2fa", "two-factor",
+                    "authenticate", "verify your identity", "security code",
+                    "we sent a code", "sent to your", "check your email"
+                ]
+                is_mfa_page = any(indicator in page_content.lower() for indicator in mfa_indicators)
+                
+                if is_mfa_page:
+                    _LOGGER.info("🔐 MFA/verification challenge detected")
+                    
+                    # Select delivery method (SMS vs Email) if user prefers SMS
+                    if self.mfa_method == "sms":
+                        # First try "Use a different method" - may reveal SMS option
+                        diff_method = None
+                        for diff_sel in ['a:has-text("Use a different method")', 'a:has-text("Try another way")', 'a:has-text("Choose a different")']:
+                            diff_method = await self.page.query_selector(diff_sel)
+                            if diff_method:
+                                break
+                        if diff_method:
+                            _LOGGER.info("📱 Expanding auth options...")
+                            await diff_method.click()
+                            await asyncio.sleep(2.0)
+                        
+                        # Try multiple selectors for SMS/Text/Phone
+                        sms_selectors = [
+                            ('a:has-text("SMS")', True),
+                            ('a:has-text("Text")', True),
+                            ('button:has-text("SMS")', True),
+                            ('button:has-text("Text")', True),
+                            ('a:has-text("Send code via SMS")', True),
+                            ('a:has-text("Text me")', True),
+                            ('a:has-text("phone")', True),
+                            ('button:has-text("phone")', True),
+                            ('[data-se="sms"]', True),
+                            ('[data-se="phone"]', True),
+                        ]
+                        sms_clicked = False
+                        for sel, _ in sms_selectors:
+                            el = await self.page.query_selector(sel)
+                            if el:
+                                el_text = (await el.text_content() or "").lower()
+                                if "sms" in el_text or "text" in el_text or "phone" in el_text or not el_text:
+                                    _LOGGER.info("📱 Selecting SMS/Text option")
+                                    await el.click()
+                                    await asyncio.sleep(2.0)
+                                    sms_clicked = True
+                                    break
+                        if not sms_clicked:
+                            _LOGGER.warning("⚠️ SMS option not found - saving page to mfa_page_debug.html for debug")
+                            try:
+                                debug_content = await self.page.content()
+                                with open("mfa_page_debug.html", "w", encoding="utf-8") as f:
+                                    f.write(debug_content)
+                            except Exception:
+                                pass
+                    
+                    # Click "Send code" / "Receive code" - required to trigger the verification code
+                    send_selectors = [
+                        'button:has-text("Receive a code via SMS")',
+                        'input[value="Receive a code via SMS"]',
+                        'a:has-text("Receive a code via SMS")',
+                        'button:has-text("Send code via SMS")',
+                        'button:has-text("Send Code")',
+                        'input[value="Send Code"]',
+                        'input[value="Send code"]',
+                        'button:has-text("Send code")',
+                        'a:has-text("Send Code")',
+                        'input[value="Email me a code"]',
+                        'button:has-text("Email me a code")',
+                        'input[value="Text me a code"]',
+                        'button:has-text("Text me a code")',
+                    ]
+                    # Wait for the send/receive button to appear (page may load after SMS option click)
+                    send_code_btn = None
+                    for _ in range(3):  # Retry a few times as page may still be loading
+                        for sel in send_selectors:
+                            send_code_btn = await self.page.query_selector(sel)
+                            if send_code_btn:
+                                break
+                        if send_code_btn:
+                            break
+                        await asyncio.sleep(1.5)
+                    if send_code_btn:
+                        _LOGGER.info("📤 Clicking to trigger verification code...")
+                        await send_code_btn.click()
+                        await asyncio.sleep(3.0)
+                    
+                    if self.mfa_code:
+                        # Try to enter the MFA code
+                        _LOGGER.info("📝 Entering MFA code...")
+                        try:
+                            # Okta typically uses input[name="answer"] or similar for verification codes
+                            mfa_input = await self.page.query_selector(
+                                'input[name="answer"], input[name="verificationCode"], '
+                                'input[type="text"][autocomplete="one-time-code"], '
+                                'input[id*="verification"], input[id*="answer"]'
+                            )
+                            if mfa_input:
+                                await mfa_input.click()
+                                await mfa_input.fill(self.mfa_code)
+                                
+                                # Find and click Verify/Submit button
+                                verify_btn = await self.page.query_selector(
+                                    'input[type="submit"], button[type="submit"], '
+                                    'button:has-text("Verify"), button:has-text("Submit"), '
+                                    'input[value="Verify"], input[value="Submit"]'
+                                )
+                                if verify_btn:
+                                    await verify_btn.click()
+                                    _LOGGER.info("✅ MFA code submitted, waiting for dashboard...")
+                                    await asyncio.sleep(2.0)
+                                else:
+                                    _LOGGER.warning("⚠️ Verify button not found, trying Enter key")
+                                    await self.page.keyboard.press("Enter")
+                            else:
+                                _LOGGER.error("❌ MFA input field not found on page")
+                                self._log_mfa_error(current_url)
+                                return False
+                        except Exception as mfa_err:
+                            _LOGGER.error(f"❌ MFA code entry failed: {mfa_err}")
+                            self._log_mfa_error(current_url)
+                            return False
+                    else:
+                        # MFA required but no code provided - signal caller to use two-phase flow
+                        return "MFA_REQUIRED"
+            
             # Wait for dashboard to load
             _LOGGER.info("🔄 Waiting for dashboard to load...")
             
             try:
                 # Wait for redirect to dashboard
-                await self.page.wait_for_url(lambda url: "myaccount.psegliny.com/dashboards" in url, timeout=20000)
+                await self.page.wait_for_url(lambda url: "myaccount.psegliny.com/dashboards" in url, timeout=25000)
                 await self.page.wait_for_load_state('networkidle')
                 _LOGGER.info("✅ Dashboard loaded")
             except Exception as e:
-                # Check if we're still on the login page (login failed)
+                # Check if we're still on the login/OAuth page (login failed)
                 current_url = self.page.url
                 if "id.myaccount.psegliny.com/oauth2" in current_url:
-                    _LOGGER.error(f"❌ Login failed - still on login page: {current_url}")
+                    page_content = await self.page.content()
+                    if any(x in page_content.lower() for x in ["verification", "code", "multi-factor", "authenticate"]):
+                        self._log_mfa_error(current_url)
+                    else:
+                        _LOGGER.error(f"❌ Login failed - still on login page: {current_url}")
                     return False
                 else:
                     _LOGGER.error(f"❌ Failed to reach dashboard: {current_url}")
@@ -442,6 +601,88 @@ class PSEGAutoLogin:
             _LOGGER.error(f"Error during realistic browsing: {e}")
             return False
     
+    async def continue_after_mfa(self, mfa_code: str) -> Optional[str]:
+        """
+        Continue login flow after MFA challenge. Call when get_cookies() returns 'MFA_REQUIRED'.
+        Browser must still be on the MFA challenge page.
+        """
+        try:
+            _LOGGER.info("📝 Entering MFA code...")
+            mfa_input = await self.page.query_selector(
+                'input[name="answer"], input[name="verificationCode"], '
+                'input[type="text"][autocomplete="one-time-code"], '
+                'input[id*="verification"], input[id*="answer"]'
+            )
+            if not mfa_input:
+                _LOGGER.error("❌ MFA input field not found")
+                return None
+            
+            await mfa_input.click()
+            await mfa_input.fill(mfa_code)
+            
+            verify_btn = await self.page.query_selector(
+                'input[type="submit"], button[type="submit"], '
+                'button:has-text("Verify"), button:has-text("Submit"), '
+                'input[value="Verify"], input[value="Submit"]'
+            )
+            if verify_btn:
+                await verify_btn.click()
+            else:
+                await self.page.keyboard.press("Enter")
+            
+            _LOGGER.info("🔄 Waiting for dashboard after MFA...")
+            await self.page.wait_for_url(lambda url: "myaccount.psegliny.com/dashboards" in url, timeout=25000)
+            await self.page.wait_for_load_state('networkidle')
+            _LOGGER.info("✅ Dashboard loaded after MFA")
+            
+            # Continue from Step 5 (exceptional dashboard)
+            await asyncio.sleep(3.0)
+            await self.page.mouse.wheel(0, random.randint(600, 800))
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            
+            if not self.exceptional_dashboard_data:
+                await self.page.goto(self.mysmartenergy_redirect, wait_until='domcontentloaded')
+            else:
+                try:
+                    headers = self.exceptional_dashboard_data['headers']
+                    important_headers = {
+                        'accept': headers.get('accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
+                        'accept-language': headers.get('accept-language', 'en-US,en;q=0.5'),
+                        'referer': headers.get('referer', self.exceptional_dashboard),
+                        'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate',
+                        'sec-fetch-site': 'same-origin', 'upgrade-insecure-requests': '1'
+                    }
+                    context_cookies = await self.context.cookies()
+                    cookie_string = '; '.join([f"{c['name']}={c['value']}" for c in context_cookies if c['domain'] in ['.psegliny.com', '.myaccount.psegliny.com']])
+                    if cookie_string:
+                        important_headers['cookie'] = cookie_string
+                    response = await self.page.request.get(self.mysmartenergy_redirect, headers=important_headers)
+                    if response.status == 302:
+                        final_url = response.headers.get('location')
+                        if final_url:
+                            await self.page.goto(final_url, wait_until='domcontentloaded', timeout=20000)
+                        else:
+                            await self.page.goto(self.mysmartenergy_redirect, wait_until='domcontentloaded', timeout=20000)
+                    else:
+                        await self.page.goto(self.mysmartenergy_redirect, wait_until='domcontentloaded', timeout=20000)
+                except Exception as e:
+                    _LOGGER.warning(f"Manual redirect failed: {e}")
+                    await self.page.goto(self.mysmartenergy_redirect, wait_until='domcontentloaded', timeout=20000)
+            
+            await self.page.wait_for_url(lambda url: "mysmartenergy.psegliny.com/Dashboard" in url, timeout=20000)
+            await self.page.wait_for_load_state('networkidle', timeout=10000)
+            await asyncio.sleep(3.0)
+            
+            context_cookies = await self.context.cookies()
+            for cookie in context_cookies:
+                if cookie['domain'] in ['.psegliny.com', '.myaccount.psegliny.com', '.mysmartenergy.psegliny.com']:
+                    self.login_cookies[cookie['name']] = cookie['value']
+            
+            return self.format_cookies_for_api()
+        except Exception as e:
+            _LOGGER.error(f"MFA continuation failed: {e}")
+            return None
+    
     def format_cookies_for_api(self) -> str:
         """Format cookies in the format expected by the API."""
         try:
@@ -465,15 +706,20 @@ class PSEGAutoLogin:
     
     async def get_cookies(self) -> Optional[str]:
         """Get cookies by following the realistic browsing pattern."""
+        result = None
         try:
             if not await self.setup_browser():
                 _LOGGER.error("❌ Failed to setup browser")
                 return None
             
             # Follow the realistic browsing pattern
-            if not await self.simulate_realistic_browsing():
+            result = await self.simulate_realistic_browsing()
+            if result is False:
                 _LOGGER.error("❌ Realistic browsing pattern failed")
                 return None
+            if result == "MFA_REQUIRED":
+                # Caller should use continue_after_mfa(code) - do NOT cleanup, keep browser alive
+                return "MFA_REQUIRED"
             
             # Check if we got the cookies we need
             if self.login_cookies:
@@ -491,7 +737,9 @@ class PSEGAutoLogin:
             _LOGGER.error(f"Error getting cookies: {e}")
             return None
         finally:
-            await self.cleanup()
+            # Don't cleanup when MFA is required - caller needs the browser for continue_after_mfa()
+            if result != "MFA_REQUIRED":
+                await self.cleanup()
     
     async def cleanup(self):
         """Clean up browser resources."""
@@ -568,16 +816,32 @@ async def main():
     parser = argparse.ArgumentParser(description='PSEG Long Island Auto Login - Home Assistant Addon')
     parser.add_argument('--email', required=True, help='PSEG account email/username')
     parser.add_argument('--password', required=True, help='PSEG account password')
+    parser.add_argument('--mfa-method', choices=['email', 'sms'], default='sms',
+                        help='MFA delivery: email (default) or sms')
+    parser.add_argument('--headed', action='store_true',
+                        help='Run with visible browser (for debugging)')
     
     args = parser.parse_args()
     
     _LOGGER.info("🚀 Starting PSEG Auto Login - Home Assistant Addon")
     _LOGGER.info(f"📧 Email: {args.email}")
-    _LOGGER.info("🔒 Headless mode: True (required for addon environment)")
+    _LOGGER.info("🔒 Headless mode: %s", not args.headed)
+    _LOGGER.info("📱 MFA method: %s", args.mfa_method)
     
-    cookies = await get_pseg_cookies(args.email, args.password)
+    cookie_getter = PSEGAutoLogin(
+        email=args.email,
+        password=args.password,
+        mfa_method=args.mfa_method,
+        headless=not args.headed,
+    )
+    cookies = await cookie_getter.get_cookies()
     
-    if cookies:
+    if cookies == "MFA_REQUIRED":
+        _LOGGER.error("❌ MFA required - PSEG sends a verification code to your email or phone.")
+        _LOGGER.error("   Check for the code, then run again with the addon API:")
+        _LOGGER.error("   POST /login (triggers email) → POST /login/mfa with code")
+        return 1
+    elif cookies:
         _LOGGER.info("🎉 SUCCESS: Cookies obtained successfully!")
         _LOGGER.info("=" * 80)
         _LOGGER.info("COOKIE STRING (for Home Assistant integration):")

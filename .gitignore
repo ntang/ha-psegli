@@ -53,6 +53,7 @@ configuration.yaml
 *.temp
 pseg_*.html
 pseg_*.json
+mfa_page_debug.html
 
 # Test scripts
 test_psegli_api_standalone.py

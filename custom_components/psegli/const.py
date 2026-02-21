@@ -10,6 +10,7 @@ DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
 CONF_COOKIE = "cookie"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
+CONF_MFA_METHOD = "mfa_method"  # "email" or "sms"
 
 # Addon configuration
 CONF_ADDON_URL = "addon_url"

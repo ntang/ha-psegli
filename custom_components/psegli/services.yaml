@@ -16,4 +16,14 @@ update_statistics:
 refresh_cookie:
   name: "Refresh PSEG Cookie"
   description: "Manually refresh the PSEG authentication cookie using the addon"
-  fields: {} 
+  fields: {}
+
+enter_mfa_code:
+  name: "Enter PSEG MFA Code"
+  description: "Complete PSEG login by entering the verification code from your email or SMS. Call this after refresh_cookie or scheduled refresh indicates MFA is required."
+  fields:
+    code:
+      required: true
+      example: "123456"
+      selector:
+        text: 

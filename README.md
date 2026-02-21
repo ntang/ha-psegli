@@ -126,6 +126,20 @@ With optional AddOn:
 - Ensure reCAPTCHA is accessible from your network
 - Check if PSEG has changed their login process
 
+### **MFA / "Enter MFA Code" action not showing**
+
+If the `psegli.enter_mfa_code` action doesn't appear in Developer Tools > Actions:
+
+1. **Add to configuration.yaml** – Some Home Assistant setups only call `async_setup` when the integration is in `configuration.yaml`. Add this and restart:
+
+   ```yaml
+   psegli:
+   ```
+
+2. **Reload the integration** – Go to Settings > Integrations > PSEG Long Island > ⋮ > Reload
+
+3. **Use Options flow** – You can still complete MFA via Settings > Integrations > PSEG Long Island > ⋮ > Options (leave cookie empty, Submit, then enter the code)
+
 ### **Data Not Updating**
 
 - Check integration logs for API errors
@@ -166,6 +180,11 @@ The addon provides these endpoints:
 - `POST /login-form` - Login with form data
 
 ## 📝 **Changelog**
+
+### **v2.4.1**
+
+- Bump version to force integration reload (fixes enter_mfa_code action visibility)
+- MFA support: enter_mfa_code service for completing verification from Developer Tools
 
 ### **v2.3.1**
 

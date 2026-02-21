@@ -12,7 +12,12 @@
   "error": {
     "invalid_auth": "Invalid authentication. Please check your username and password and try again.",
     "login_failed": "Login failed. Please check your credentials and try again.",
-    "unknown": "Unexpected error occurred."
+    "unknown": "Unexpected error occurred.",
+    "mfa_code_required": "Please enter the verification code from your email or phone.",
+    "mfa_failed": "MFA verification failed. The code may be invalid or expired.",
+    "addon_unavailable": "Addon not available. Please ensure the PSEG automation addon is installed and running.",
+    "addon_failed": "Addon failed to get cookies.",
+    "credentials_not_found": "No username or password configured. Please reconfigure the integration."
   },
   "abort": {
     "already_configured": "Device is already configured."

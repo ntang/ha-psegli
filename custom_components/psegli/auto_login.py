@@ -7,6 +7,9 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Sentinel for MFA required - caller should use complete_mfa_login(code)
+MFA_REQUIRED = "MFA_REQUIRED"
+
 async def check_addon_health() -> bool:
     """Check if the addon is available and healthy."""
     try:
@@ -35,8 +38,18 @@ async def check_addon_health() -> bool:
         logger.debug(f"Error checking addon health: {e}")
         return False
 
-async def get_fresh_cookies(username: str, password: str) -> Optional[str]:
-    """Get fresh cookies using the automation addon."""
+async def get_fresh_cookies(
+    username: str,
+    password: str,
+    mfa_code: Optional[str] = None,
+    mfa_method: str = "sms",
+) -> Optional[str]:
+    """Get fresh cookies using the automation addon.
+    
+    Returns:
+        Cookie string on success, MFA_REQUIRED when MFA is needed (call complete_mfa_login),
+        or None on failure.
+    """
     try:
         logger.debug("Requesting fresh cookies from PSEG automation addon...")
         
@@ -49,8 +62,11 @@ async def get_fresh_cookies(username: str, password: str) -> Optional[str]:
         async with aiohttp.ClientSession() as session:
             login_data = {
                 "username": username,
-                "password": password
+                "password": password,
+                "mfa_method": mfa_method or "sms",
             }
+            if mfa_code:
+                login_data["mfa_code"] = mfa_code
             
             logger.debug("Sending login request to addon with timeout=120s...")
             
@@ -66,13 +82,41 @@ async def get_fresh_cookies(username: str, password: str) -> Optional[str]:
                     if result.get("success") and result.get("cookies"):
                         logger.debug("Successfully obtained cookies from addon")
                         return result["cookies"]
-                    else:
-                        logger.error(f"Addon login failed: {result.get('error', 'Unknown error')}")
-                        return None
+                    if result.get("mfa_required"):
+                        logger.info("PSEG MFA required - use complete_mfa_login(code) with code from email or SMS")
+                        return MFA_REQUIRED
+                    logger.error(f"Addon login failed: {result.get('error', 'Unknown error')}")
+                    return None
                 else:
                     logger.error(f"Addon request failed with status {resp.status}")
                     return None
                     
     except Exception as e:
         logger.error(f"Failed to get cookies from addon: {e}")
+        return None
+
+
+async def complete_mfa_login(code: str) -> Optional[str]:
+    """Complete login after MFA - provide the verification code from your email or SMS.
+    
+    Call this after get_fresh_cookies returns MFA_REQUIRED. The addon keeps the
+    session alive for a few minutes waiting for the code.
+    """
+    try:
+        logger.debug("Sending MFA code to addon...")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "http://localhost:8000/login/mfa",
+                json={"code": code},
+                timeout=120,
+            ) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    if result.get("success") and result.get("cookies"):
+                        logger.debug("MFA successful, cookies obtained")
+                        return result["cookies"]
+                logger.error(f"MFA failed: {await resp.text()}")
+                return None
+    except Exception as e:
+        logger.error(f"Failed to complete MFA: {e}")
         return None

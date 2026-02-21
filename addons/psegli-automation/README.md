@@ -2,7 +2,7 @@
 
 This Home Assistant addon provides automated login services for PSEG Long Island using Playwright. It runs in its own container and exposes a web API for cookie generation.
 
-**Version**: 2.3.1
+**Version**: 2.4.0
 
 ## Features
 
@@ -81,11 +81,22 @@ username=your_email@example.com&password=your_password
 
 The PSEG Long Island integration will automatically use this addon when available. No additional configuration needed.
 
+## Multi-Factor Authentication (MFA)
+
+PSEG Long Island added MFA in late 2024/early 2025. When MFA is required:
+
+1. **POST /login** with username and password - the addon will return `mfa_required: true`
+2. Check your email or phone for the verification code (sent by PSEG)
+3. **POST /login/mfa** with `{"code": "123456"}` (your code) - the addon completes login and returns cookies
+
+The addon keeps the browser session alive for a few minutes after step 1, so complete step 3 promptly.
+
 ## Troubleshooting
 
 - **Port Conflicts**: Ensure port 8000 is available
 - **Browser Issues**: Check addon logs for Playwright errors
 - **Network Issues**: Verify addon can reach PSEG website
+- **MFA Required**: If login fails with "still on login page", PSEG now requires MFA - use the two-step flow above
 
 ## Development
 
