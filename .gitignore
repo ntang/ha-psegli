@@ -54,6 +54,7 @@ configuration.yaml
 pseg_*.html
 pseg_*.json
 mfa_page_debug.html
+mfa_fail_debug.html
 
 # Test scripts
 test_psegli_api_standalone.py

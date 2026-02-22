@@ -608,28 +608,84 @@ class PSEGAutoLogin:
         """
         try:
             _LOGGER.info("📝 Entering MFA code...")
-            mfa_input = await self.page.query_selector(
-                'input[name="answer"], input[name="verificationCode"], '
-                'input[type="text"][autocomplete="one-time-code"], '
-                'input[id*="verification"], input[id*="answer"]'
-            )
+            # Wait for code input to appear (page may update after "Send code" was clicked)
+            mfa_input_selectors = [
+                'input[name="answer"]',
+                'input[name="verificationCode"]',
+                'input[type="text"][autocomplete="one-time-code"]',
+                'input[type="tel"][inputmode="numeric"]',
+                'input[type="tel"]',
+                'input[id*="verification"]',
+                'input[id*="answer"]',
+                'input[placeholder*="code" i]',
+                'input[placeholder*="Enter" i]',
+                'input[data-se="answer"]',
+            ]
+            mfa_input = None
+            try:
+                frames_to_check = self.page.frames
+            except Exception:
+                frames_to_check = [self.page.main_frame]
+            for _ in range(20):  # Wait up to ~20 seconds for input to appear
+                for frame in frames_to_check:
+                    for sel in mfa_input_selectors:
+                        try:
+                            mfa_input = await frame.query_selector(sel)
+                            if mfa_input:
+                                is_visible = await mfa_input.is_visible()
+                                if is_visible:
+                                    break
+                                mfa_input = None
+                        except Exception:
+                            mfa_input = None
+                    if mfa_input:
+                        break
+                if mfa_input:
+                    break
+                await asyncio.sleep(1.0)
+            
             if not mfa_input:
-                _LOGGER.error("❌ MFA input field not found")
+                _LOGGER.error("❌ MFA input field not found - page may have changed. Current URL: %s", self.page.url)
+                try:
+                    content = await self.page.content()
+                    if len(content) > 500:
+                        with open("mfa_fail_debug.html", "w", encoding="utf-8") as f:
+                            f.write(content)
+                    _LOGGER.error("Page saved to mfa_fail_debug.html for inspection")
+                except Exception:
+                    pass
                 return None
             
             await mfa_input.click()
             await mfa_input.fill(mfa_code)
             
-            verify_btn = await self.page.query_selector(
-                'input[type="submit"], button[type="submit"], '
-                'button:has-text("Verify"), button:has-text("Submit"), '
-                'input[value="Verify"], input[value="Submit"]'
-            )
+            # Find and click Verify/Submit - Okta uses various button patterns
+            verify_selectors = [
+                'input[type="submit"]',
+                'button[type="submit"]',
+                'button:has-text("Verify")',
+                'button:has-text("Submit")',
+                'input[value="Verify"]',
+                'input[value="Submit"]',
+                'button:has-text("Next")',
+                'a:has-text("Verify")',
+                'input[data-se="verify"]',
+            ]
+            verify_btn = None
+            for sel in verify_selectors:
+                try:
+                    verify_btn = await self.page.query_selector(sel)
+                    if verify_btn and await verify_btn.is_visible():
+                        break
+                except Exception:
+                    continue
             if verify_btn:
                 await verify_btn.click()
             else:
+                _LOGGER.info("Verify button not found, pressing Enter")
                 await self.page.keyboard.press("Enter")
             
+            await asyncio.sleep(2.0)  # Let form submit
             _LOGGER.info("🔄 Waiting for dashboard after MFA...")
             await self.page.wait_for_url(lambda url: "myaccount.psegliny.com/dashboards" in url, timeout=25000)
             await self.page.wait_for_load_state('networkidle')
@@ -680,7 +736,10 @@ class PSEGAutoLogin:
             
             return self.format_cookies_for_api()
         except Exception as e:
-            _LOGGER.error(f"MFA continuation failed: {e}")
+            _LOGGER.error("MFA continuation failed: %s (type: %s)", e, type(e).__name__)
+            _LOGGER.error("Current URL at failure: %s", self.page.url if self.page else "no page")
+            import traceback
+            _LOGGER.debug("Traceback: %s", traceback.format_exc())
             return None
     
     def format_cookies_for_api(self) -> str:
