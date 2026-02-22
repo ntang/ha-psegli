@@ -2,7 +2,7 @@
 
 This Home Assistant addon provides automated login services for PSEG Long Island using Playwright. It runs in its own container and exposes a web API for cookie generation.
 
-**Version**: 2.4.2
+**Version**: 2.4.3
 
 ## Features
 
@@ -106,3 +106,18 @@ To build locally:
 docker build -t psegli-automation .
 docker run -p 8000:8000 psegli-automation
 ```
+
+### Watch MFA flow in headed mode (visible browser)
+
+To see the browser during login/MFA for debugging, run the addon locally (not in Docker/HA) with headed mode:
+
+```bash
+cd addons/psegli-automation
+HEADED=1 python run.py
+```
+
+Then in another terminal:
+1. `curl -X POST http://localhost:8000/login -H "Content-Type: application/json" -d '{"username":"your@email.com","password":"yourpass"}'`
+2. When you get the SMS code, `curl -X POST http://localhost:8000/login/mfa -H "Content-Type: application/json" -d '{"code":"123456"}'`
+
+A browser window will open so you can watch the MFA flow.

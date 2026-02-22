@@ -175,6 +175,11 @@ The addon provides these endpoints:
 
 ## 📝 **Changelog**
 
+### **v2.4.3**
+
+- Fix MFA code submission flow (wait_for_selector, iframe support, get_by_placeholder fallback)
+- Add HEADED=1 env var for local MFA debugging
+
 ### **v2.4.2**
 
 - Fix enter_mfa_code action: register identically to refresh_cookie and update_statistics (no configuration.yaml needed)

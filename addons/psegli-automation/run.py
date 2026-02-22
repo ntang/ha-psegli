@@ -3,7 +3,11 @@
 
 import asyncio
 import logging
+import os
 from typing import Dict, Optional
+
+# Set HEADED=1 to run browser in headed mode (visible) for local MFA debugging
+HEADED = os.environ.get("HEADED", "").lower() in ("1", "true", "yes")
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -16,6 +20,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PSEG Long Island Automation", version="1.0.0")
+
+if HEADED:
+    logger.info("HEADED mode enabled - browser window will be visible for MFA debugging")
 
 # Store in-progress MFA session (single session at a time)
 _mfa_session: Optional[PSEGAutoLogin] = None
@@ -61,6 +68,7 @@ async def login(request: LoginRequest):
             password=request.password,
             mfa_code=request.mfa_code,
             mfa_method=request.mfa_method or "sms",
+            headless=not HEADED,
         )
         result = await cookie_getter.get_cookies()
         
