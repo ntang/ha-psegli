@@ -126,13 +126,13 @@ With optional AddOn:
 - Ensure reCAPTCHA is accessible from your network
 - Check if PSEG has changed their login process
 
-### **MFA / "Enter MFA Code" action not showing**
+### **reCAPTCHA / Login Issues**
 
-If the `psegli.enter_mfa_code` action doesn't appear in Developer Tools > Actions:
+The addon uses a persistent browser profile to build reCAPTCHA trust over time. If login fails:
 
-1. **Reload the integration** – Go to Settings > Integrations > PSEG Long Island > ⋮ > Reload
-
-2. **Use Options flow** – You can still complete MFA via Settings > Integrations > PSEG Long Island > ⋮ > Options (leave cookie empty, Submit, then enter the code)
+1. **Retry** – reCAPTCHA challenges usually pass after a few attempts with the persistent profile
+2. **Check addon logs** – Look for "CAPTCHA_REQUIRED" messages
+3. **Restart the addon** – This resets the browser session if it gets stuck
 
 ### **Data Not Updating**
 

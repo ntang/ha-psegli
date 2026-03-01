@@ -81,22 +81,22 @@ username=your_email@example.com&password=your_password
 
 The PSEG Long Island integration will automatically use this addon when available. No additional configuration needed.
 
-## Multi-Factor Authentication (MFA)
+## reCAPTCHA Handling
 
-PSEG Long Island added MFA in late 2024/early 2025. When MFA is required:
+The addon logs in directly to mysmartenergy.psegliny.com, which uses Google invisible reCAPTCHA. The addon handles this by:
 
-1. **POST /login** with username and password - the addon will return `mfa_required: true`
-2. Check your email or phone for the verification code (sent by PSEG)
-3. **POST /login/mfa** with `{"code": "123456"}` (your code) - the addon completes login and returns cookies
+- Using `playwright-stealth` for anti-fingerprinting
+- Maintaining a persistent browser profile (`.browser_profile/`) to build reCAPTCHA trust over time
+- Returning `captcha_required: true` if a visible challenge is triggered
 
-The addon keeps the browser session alive for a few minutes after step 1, so complete step 3 promptly.
+reCAPTCHA challenges usually stop appearing after a few successful logins with the persistent profile.
 
 ## Troubleshooting
 
 - **Port Conflicts**: Ensure port 8000 is available
 - **Browser Issues**: Check addon logs for Playwright errors
 - **Network Issues**: Verify addon can reach PSEG website
-- **MFA Required**: If login fails with "still on login page", PSEG now requires MFA - use the two-step flow above
+- **reCAPTCHA**: If login fails with `captcha_required`, retry — the persistent profile builds trust over time
 
 ## Development
 
@@ -107,9 +107,9 @@ docker build -t psegli-automation .
 docker run -p 8000:8000 psegli-automation
 ```
 
-### Watch MFA flow in headed mode (visible browser)
+### Watch login flow in headed mode (visible browser)
 
-To see the browser during login/MFA for debugging, run the addon locally (not in Docker/HA) with headed mode:
+To see the browser during login for debugging, run the addon locally (not in Docker/HA) with headed mode:
 
 ```bash
 cd addons/psegli-automation
@@ -117,7 +117,8 @@ HEADED=1 python run.py
 ```
 
 Then in another terminal:
-1. `curl -X POST http://localhost:8000/login -H "Content-Type: application/json" -d '{"username":"your@email.com","password":"yourpass"}'`
-2. When you get the SMS code, `curl -X POST http://localhost:8000/login/mfa -H "Content-Type: application/json" -d '{"code":"123456"}'`
+```bash
+curl -X POST http://localhost:8000/login -H "Content-Type: application/json" -d '{"username":"your@email.com","password":"yourpass"}'
+```
 
-A browser window will open so you can watch the MFA flow.
+A browser window will open so you can watch the login and reCAPTCHA flow.

@@ -12,7 +12,7 @@
 | 1 | **COMPLETE** | `fb0f070` | All 5 sub-tasks done. 596 insertions, 1508 deletions across 8 files. |
 | 2 | **COMPLETE** | `395b51e` | psegli.py purely sync, all callers use async_add_executor_job |
 | 3 | **COMPLETE** | `2f9e8f3` | get_last_statistics, CancelledError, service guards |
-| 4 | **COMPLETE** | (pending commit) | 25 tests across 3 files, all passing |
+| 4 | **COMPLETE** | `732e5f9` | 25 tests across 3 files, all passing |
 | 5 | Pending | — | Post-deploy |
 
 ### Learnings & Adjustments
