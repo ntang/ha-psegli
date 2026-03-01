@@ -29,16 +29,18 @@ PLATFORMS: list[Platform] = []
 
 
 def _get_active_entry(hass: HomeAssistant) -> ConfigEntry | None:
-    """Look up the first active config entry for this domain.
+    """Look up the first loaded config entry for this domain.
 
     Service handlers and scheduled tasks use this instead of closing over
     a specific entry, so they survive entry reloads without becoming stale.
+    Only returns entries that have been fully set up (have data in hass.data).
     """
-    entries = hass.config_entries.async_entries(DOMAIN)
-    if not entries:
-        _LOGGER.error("No active PSEG config entries found")
-        return None
-    return entries[0]
+    domain_data = hass.data.get(DOMAIN, {})
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.entry_id in domain_data:
+            return entry
+    _LOGGER.error("No loaded PSEG config entries found")
+    return None
 
 async def get_last_cumulative_kwh(hass: HomeAssistant, statistic_id: str) -> float:
     """Get the last recorded cumulative kWh for a given statistic_id.
@@ -553,7 +555,7 @@ async def _process_chart_data(hass: HomeAssistant, chart_data: dict[str, Any]) -
 
             # Convert to datetime if it's a timestamp
             if isinstance(first_timestamp, (int, float)):
-                first_dt = datetime.fromtimestamp(first_timestamp)
+                first_dt = datetime.fromtimestamp(first_timestamp, tz=timezone.utc)
             else:
                 first_dt = first_timestamp
 
@@ -580,7 +582,7 @@ async def _process_chart_data(hass: HomeAssistant, chart_data: dict[str, Any]) -
 
                             # Convert timestamp to datetime if it's not already
                             if isinstance(timestamp, (int, float)):
-                                timestamp = datetime.fromtimestamp(timestamp)
+                                timestamp = datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
                             # Ensure we have a timezone-aware datetime
                             if timestamp.tzinfo is None:
@@ -675,50 +677,6 @@ async def _process_chart_data(hass: HomeAssistant, chart_data: dict[str, Any]) -
                     _LOGGER.debug("Successfully updated statistics for %s", statistic_id)
                 else:
                     _LOGGER.debug("Statistics update completed (non-awaitable result) for %s", statistic_id)
-
-                # Verify statistics were stored by checking again
-                _LOGGER.debug("Verifying statistics were stored by checking again...")
-                try:
-                    from homeassistant.components.recorder.statistics import statistics_during_period
-
-                    # Query for the statistics we just stored to verify the sum values
-                    end_time = datetime.now()
-                    start_time = end_time - timedelta(hours=24)  # Last 24 hours
-
-                    verification_stats = await get_instance(hass).async_add_executor_job(
-                        statistics_during_period,
-                        hass,
-                        start_time,
-                        end_time,
-                        [statistic_id],  # Only check our specific statistic
-                        "hour",
-                        None,
-                        {"start", "end", "sum"},  # Include sum field
-                    )
-
-                    _LOGGER.debug("Verification check returned: %s", verification_stats)
-
-                    if verification_stats and statistic_id in verification_stats and verification_stats[statistic_id]:
-                        # Get the last stored statistic with sum value
-                        stored_stats = verification_stats[statistic_id]
-                        last_stored = None
-
-                        # Find the last entry that has a sum value
-                        for stat in reversed(stored_stats):
-                            if 'sum' in stat and stat['sum'] is not None:
-                                last_stored = stat
-                                break
-
-                        if last_stored:
-                            last_sum = last_stored.get("sum", 0.0)
-                            _LOGGER.debug("Verification: Statistics confirmed stored for %s, last sum: %.6f", statistic_id, last_sum)
-                        else:
-                            _LOGGER.warning("Verification: No sum values found in stored statistics for %s", statistic_id)
-                    else:
-                        _LOGGER.warning("Verification: No statistics found for %s", statistic_id)
-
-                except Exception as e:
-                    _LOGGER.debug("Could not verify statistics: %s", e)
 
             except Exception as e:
                 _LOGGER.error("Error calling async_add_external_statistics for %s: %s", statistic_id, e)

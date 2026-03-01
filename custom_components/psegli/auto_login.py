@@ -6,6 +6,8 @@ from typing import Optional
 
 import aiohttp
 
+from .const import DEFAULT_ADDON_URL
+
 logger = logging.getLogger(__name__)
 
 # Sentinel for CAPTCHA required — reCAPTCHA challenge triggered, user should retry
@@ -17,7 +19,7 @@ async def check_addon_health() -> bool:
     try:
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get("http://localhost:8000/health") as resp:
+            async with session.get(f"{DEFAULT_ADDON_URL}/health") as resp:
                 if resp.status == 200:
                     result = await resp.json()
                     if result.get("status") == "healthy":
@@ -55,7 +57,7 @@ async def get_fresh_cookies(
             }
 
             async with session.post(
-                "http://localhost:8000/login",
+                f"{DEFAULT_ADDON_URL}/login",
                 json=login_data,
             ) as resp:
                 if resp.status == 200:

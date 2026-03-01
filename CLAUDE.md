@@ -55,7 +55,6 @@ Every :00 and :30 (scheduled refresh):
 | `/health` | GET | Health check |
 | `/login` | POST | Login; returns cookies or `captcha_required=true` |
 | `/login-form` | POST | Form-data variant of `/login` |
-| `/test-cookie` | GET | Test if a cookie string is still valid |
 
 ### Key Code Conventions
 
@@ -64,7 +63,7 @@ Every :00 and :30 (scheduled refresh):
 - **Sync HTTP client** — `PSEGLIClient` uses `requests` (synchronous). Callers in `__init__.py` and `config_flow.py` use `hass.async_add_executor_job()` to run methods off the event loop.
 - **Stealth browser** — `PSEGAutoLogin` uses `playwright-stealth` library (`Stealth` class + `apply_stealth_async()`) and `launch_persistent_context()` for reCAPTCHA trust.
 - **Cumulative statistics** — HA requires `has_sum=True` with a running total; `get_last_cumulative_kwh()` uses `get_last_statistics` to find the last known sum regardless of age.
-- **Timestamp quirk** — PSEG API timestamps are shifted +4 hours in `_parse_data()` to align with actual Eastern peak hours (TODO: investigate DST behavior).
+- **Timestamp quirk** — PSEG API returns timestamps as Eastern local time encoded as Unix epoch; `_parse_data()` interprets them as `America/New_York` via pytz for correct DST handling.
 - **Dynamic entry lookup** — Service handlers and scheduled tasks use `_get_active_entry(hass)` to look up the config entry at call time, avoiding stale closure references on reload.
 - **Persistent notifications** — used to communicate auth status, reCAPTCHA prompts, and errors to the user.
 

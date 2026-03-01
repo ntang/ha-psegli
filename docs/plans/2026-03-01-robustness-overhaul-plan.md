@@ -14,7 +14,8 @@
 | 3 | **COMPLETE** | `2f9e8f3` | get_last_statistics, CancelledError, service guards |
 | 4 | **COMPLETE** | `732e5f9` | 25 tests across 3 files, all passing |
 | 4.5 | **COMPLETE** | `c3f0fc3` | Codex review fixes: cookie logging, service lifecycle, docs |
-| 4.6 | IN PROGRESS | — | Self-review: medium priority fixes |
+| 4.6 | **COMPLETE** | `08a4c24` | Self-review: broken unload, validate-before-persist, unused imports |
+| 4.7 | IN PROGRESS | — | Codex round 2: multi-entry guard, timestamps, addon URL, test-cookie, verification overhead |
 | 5 | Pending | — | Post-deploy |
 
 ### Phase 4.6 — Combined Self-Review + Agent Review Findings
@@ -41,6 +42,20 @@
 - +4h timestamp shift needs DST investigation before next DST change
 - `run.py` test-cookie endpoint blocks event loop with sync `requests`
 - Missing test coverage for `__init__.py` lifecycle and `config_flow.py`
+
+### Phase 4.7 — Codex Review Round 2
+
+**High priority (fix now):**
+- 4.7.1: Multi-entry safety — config flow must enforce single instance (`async_get_options_flow` + `_abort_if_unique_id_configured`); `_get_active_entry` should guard against disabled entries
+- 4.7.2: Timestamp handling — replace naive `fromtimestamp` + hardcoded +4h with proper UTC-aware `datetime.fromtimestamp(ts, tz=timezone.utc)` and explicit `America/New_York` localization
+
+**Medium priority (fix now):**
+- 4.7.3: Addon URL hardcoded — use `DEFAULT_ADDON_URL` from const.py in `auto_login.py` (integration-side)
+- 4.7.4: `/test-cookie` endpoint — removed entirely (unused by integration; had blocking `requests.get` in async context and cookie in query string)
+- 4.7.5: Verification query overhead — removed `statistics_during_period` verification query from `_process_chart_data` (debug overhead, extra recorder round-trip on every update)
+
+**Medium priority (future):**
+- 4.7.6: Additional test coverage — tests for `__init__.py` lifecycle (setup/unload/service handlers) and config flow
 
 ### Learnings & Adjustments
 

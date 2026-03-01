@@ -10,7 +10,6 @@ import logging
 import os
 from typing import Optional
 
-import requests as http_requests
 import uvicorn
 from fastapi import FastAPI, Form
 from pydantic import BaseModel
@@ -94,28 +93,6 @@ async def login_form(
 ):
     """Login endpoint that accepts form data."""
     return await login(LoginRequest(username=username, password=password))
-
-
-@app.get("/test-cookie")
-async def test_cookie(cookie: str):
-    """Test if a cookie string is still valid against mysmartenergy."""
-    try:
-        resp = http_requests.get(
-            "https://mysmartenergy.psegliny.com/Dashboard",
-            headers={
-                "Cookie": cookie,
-                "User-Agent": "Mozilla/5.0",
-            },
-            timeout=30,
-        )
-        is_valid = "LoginEmail" not in resp.text and resp.status_code == 200
-        return {
-            "valid": is_valid,
-            "status_code": resp.status_code,
-            "final_url": resp.url,
-        }
-    except Exception as e:
-        return {"valid": False, "error": str(e)}
 
 
 if __name__ == "__main__":

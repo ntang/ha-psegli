@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
+import pytz
 import requests
 from bs4 import BeautifulSoup
 
@@ -246,6 +247,7 @@ class PSEGLIClient:
 
                 _LOGGER.debug("Processing series: %s with %d data points", series_name, len(data_points))
 
+                eastern = pytz.timezone('America/New_York')
                 valid_points = []
                 for i, point in enumerate(data_points):
                     if isinstance(point, dict) and "x" in point and "y" in point:
@@ -253,13 +255,13 @@ class PSEGLIClient:
                         value = point["y"]
                         if value is None:
                             value = 0
-                        # +4h shift: empirically determined to align API timestamps with
-                        # actual Eastern Time peak hours. The API appears to return timestamps
-                        # offset by ~4 hours (e.g. 11:00 AM when actual reading is 3:00 PM).
-                        # TODO (Phase 3.5): Investigate whether this is a fixed offset or
-                        # varies with DST (EDT=UTC-4, EST=UTC-5).
-                        shifted_timestamp = timestamp + (4 * 3600)
-                        local_time = datetime.fromtimestamp(shifted_timestamp)
+                        # The API returns timestamps as Eastern local time encoded as
+                        # Unix epoch (the epoch values represent local ET, not actual
+                        # UTC). We extract the raw hour/minute values and localize them
+                        # as America/New_York so DST is handled correctly.
+                        utc_dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                        naive_dt = utc_dt.replace(tzinfo=None)
+                        local_time = eastern.localize(naive_dt)
                         valid_points.append({
                             "timestamp": local_time,
                             "value": value

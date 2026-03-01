@@ -30,6 +30,10 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, str] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
+        # Only one PSEG instance allowed
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
+
         errors = {}
 
         if user_input is not None:
