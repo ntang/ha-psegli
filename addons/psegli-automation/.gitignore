@@ -1,0 +1,17 @@
+# Virtual environment
+.venv/
+
+# Persistent Playwright browser profile (contains session data, reCAPTCHA trust)
+.browser_profile/
+
+# Cached session cookie (contains auth credentials)
+.cookie
+
+# Python
+__pycache__/
+*.pyc
+
+# Debug dumps from failed login/MFA attempts
+mfa_page_debug.html
+mfa_fail_debug.html
+*_debug.html
