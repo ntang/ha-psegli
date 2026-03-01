@@ -13,8 +13,7 @@
     "invalid_auth": "Invalid authentication. Please check your username and password and try again.",
     "login_failed": "Login failed. Please check your credentials and try again.",
     "unknown": "Unexpected error occurred.",
-    "mfa_code_required": "Please enter the verification code from your email or phone.",
-    "mfa_failed": "MFA verification failed. The code may be invalid or expired.",
+    "captcha_required": "reCAPTCHA challenge triggered. Please try again — it usually passes after a few attempts.",
     "addon_unavailable": "Addon not available. Please ensure the PSEG automation addon is installed and running.",
     "addon_failed": "Addon failed to get cookies.",
     "credentials_not_found": "No username or password configured. Please reconfigure the integration."

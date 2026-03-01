@@ -1,136 +1,122 @@
 #!/usr/bin/env python3
-"""PSEG Long Island Automation Addon - FastAPI Server"""
+"""PSEG Long Island Automation Addon — FastAPI Server.
+
+Provides HTTP endpoints for the Home Assistant integration to obtain
+authenticated cookies from mysmartenergy.psegliny.com.
+"""
 
 import asyncio
 import logging
 import os
-from typing import Dict, Optional
+from typing import Optional
 
-# Set HEADED=1 to run browser in headed mode (visible) for local MFA debugging
-HEADED = os.environ.get("HEADED", "").lower() in ("1", "true", "yes")
-from fastapi import FastAPI, HTTPException, Form
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+import requests as http_requests
 import uvicorn
+from fastapi import FastAPI, Form
+from pydantic import BaseModel
 
-from auto_login import get_fresh_cookies, PSEGAutoLogin
+from auto_login import LoginResult, get_fresh_cookies
 
-# Configure logging
+# Set HEADED=1 to run browser in headed mode (visible) for debugging
+HEADED = os.environ.get("HEADED", "").lower() in ("1", "true", "yes")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PSEG Long Island Automation", version="1.0.0")
+app = FastAPI(title="PSEG Long Island Automation", version="2.0.0")
+
+# Prevent concurrent login attempts (Playwright can only run one at a time)
+_login_lock = asyncio.Lock()
 
 if HEADED:
-    logger.info("HEADED mode enabled - browser window will be visible for MFA debugging")
+    logger.info("HEADED mode enabled — browser will be visible")
 
-# Store in-progress MFA session (single session at a time)
-_mfa_session: Optional[PSEGAutoLogin] = None
 
 class LoginRequest(BaseModel):
     username: str
     password: str
-    mfa_code: Optional[str] = None  # If provided, used when MFA challenge appears
-    mfa_method: Optional[str] = "sms"  # "email" or "sms" - which method to use for code delivery
 
-class MfaRequest(BaseModel):
-    code: str
 
 class LoginResponse(BaseModel):
     success: bool
     cookies: Optional[str] = None
     error: Optional[str] = None
-    mfa_required: Optional[bool] = None  # True when MFA needed - call POST /login/mfa with code
+    captcha_required: Optional[bool] = None
+
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "psegli-automation"}
 
+
 @app.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
-    """Login to PSEG and return cookies. If MFA is required, returns mfa_required=true - then POST to /login/mfa with the code."""
-    global _mfa_session
-    try:
-        logger.info(f"Login attempt for user: {request.username}")
-        
-        # Clear any stale MFA session
-        if _mfa_session:
-            try:
-                await _mfa_session.cleanup()
-            except Exception:
-                pass
-            _mfa_session = None
-        
-        # Use direct PSEGAutoLogin to support two-phase MFA flow
-        cookie_getter = PSEGAutoLogin(
-            email=request.username,
-            password=request.password,
-            mfa_code=request.mfa_code,
-            mfa_method=request.mfa_method or "sms",
-            headless=not HEADED,
-        )
-        result = await cookie_getter.get_cookies()
-        
-        if result == "MFA_REQUIRED":
-            _mfa_session = cookie_getter
-            logger.info("MFA required - waiting for code via POST /login/mfa")
-            return LoginResponse(
-                success=False,
-                mfa_required=True,
-                error="PSEG requires multi-factor authentication. Check your email or phone for the verification code, then POST to /login/mfa with the code."
+    """Login to PSEG mysmartenergy and return session cookies."""
+    async with _login_lock:
+        try:
+            logger.info("Login attempt for user: %s", request.username)
+
+            result = await get_fresh_cookies(
+                username=request.username,
+                password=request.password,
+                headless=not HEADED,
             )
-        
-        if result:
-            logger.info("Login successful, cookies obtained")
-            return LoginResponse(success=True, cookies=result)
-        else:
+
+            if result == "CAPTCHA_REQUIRED":
+                logger.warning("CAPTCHA required — manual intervention needed")
+                return LoginResponse(
+                    success=False,
+                    captcha_required=True,
+                    error=(
+                        "reCAPTCHA challenge triggered. "
+                        "Try again — it usually passes after a few attempts "
+                        "with the persistent browser profile."
+                    ),
+                )
+
+            if result:
+                logger.info("Login successful, cookies obtained")
+                return LoginResponse(success=True, cookies=result)
+
             logger.warning("Login failed, no cookies returned")
             return LoginResponse(success=False, error="Login failed")
-            
-    except Exception as e:
-        logger.error(f"Login error: {e}")
-        return LoginResponse(success=False, error=str(e))
 
-@app.post("/login/mfa", response_model=LoginResponse)
-async def login_mfa(request: MfaRequest):
-    """Complete login after MFA - provide the verification code from your email or SMS."""
-    global _mfa_session
-    if not _mfa_session:
-        return LoginResponse(
-            success=False,
-            error="No MFA session in progress. Call POST /login first, then provide the code from your email or phone here."
-        )
-    try:
-        logger.info("Completing MFA with provided code")
-        cookies = await _mfa_session.continue_after_mfa(request.code)
-        await _mfa_session.cleanup()
-        _mfa_session = None
-        
-        if cookies:
-            logger.info("MFA successful, cookies obtained")
-            return LoginResponse(success=True, cookies=cookies)
-        else:
-            return LoginResponse(success=False, error="MFA verification failed - code may be invalid or expired")
-    except Exception as e:
-        logger.error(f"MFA error: {e}")
-        if _mfa_session:
-            try:
-                await _mfa_session.cleanup()
-            except Exception:
-                pass
-            _mfa_session = None
-        return LoginResponse(success=False, error=str(e))
+        except Exception as e:
+            logger.error("Login error: %s", e)
+            return LoginResponse(success=False, error=str(e))
+
 
 @app.post("/login-form", response_model=LoginResponse)
 async def login_form(
     username: str = Form(...),
     password: str = Form(...),
-    mfa_code: Optional[str] = Form(None),
-    mfa_method: Optional[str] = Form("sms"),
 ):
     """Login endpoint that accepts form data."""
-    return await login(LoginRequest(username=username, password=password, mfa_code=mfa_code, mfa_method=mfa_method))
+    return await login(LoginRequest(username=username, password=password))
+
+
+@app.get("/test-cookie")
+async def test_cookie(cookie: str):
+    """Test if a cookie string is still valid against mysmartenergy."""
+    try:
+        resp = http_requests.get(
+            "https://mysmartenergy.psegliny.com/Dashboard",
+            headers={
+                "Cookie": cookie,
+                "User-Agent": "Mozilla/5.0",
+            },
+            timeout=30,
+        )
+        is_valid = "LoginEmail" not in resp.text and resp.status_code == 200
+        return {
+            "valid": is_valid,
+            "status_code": resp.status_code,
+            "final_url": resp.url,
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
