@@ -15,8 +15,8 @@ from homeassistant.components.recorder.statistics import (
 from homeassistant.components.recorder import get_instance
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, CONF_USERNAME, CONF_PASSWORD, CONF_COOKIE
@@ -148,14 +148,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except InvalidAuth as e:
         _LOGGER.error("Authentication failed: %s", e)
         raise ConfigEntryAuthFailed("Invalid authentication")
+    except PSEGLIError as e:
+        _LOGGER.warning("Network error during setup, will retry: %s", e)
+        raise ConfigEntryNotReady(f"PSEG unreachable: {e}") from e
 
     # Create coordinator for automatic updates (like Opower)
     coordinator = PSEGCoordinator(hass, entry, client)
     entry.runtime_data = coordinator
 
     # Store coordinator reference in hass.data for proper cleanup
-    if DOMAIN not in hass.data:
-        hass.data[DOMAIN] = {}
     hass.data[DOMAIN]['coordinator'] = coordinator
 
     # Listen for config changes (when user updates cookie via options)
@@ -246,7 +247,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             elif cookies:
                 current_client = hass.data[DOMAIN][active_entry.entry_id]
 
+                # Validate BEFORE persisting to avoid storing a bad cookie
                 current_client.update_cookie(cookies)
+                await hass.async_add_executor_job(current_client.test_connection)
+                _LOGGER.debug("New cookie validation successful")
 
                 if hasattr(active_entry, 'runtime_data') and active_entry.runtime_data:
                     coord = active_entry.runtime_data
@@ -259,9 +263,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
 
                 _LOGGER.info("Successfully refreshed cookie via addon")
-
-                await hass.async_add_executor_job(current_client.test_connection)
-                _LOGGER.debug("New cookie validation successful")
 
                 # Fetch and save energy data with the new cookie
                 try:
@@ -381,7 +382,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             elif cookies:
                 current_client = hass.data[DOMAIN][active_entry.entry_id]
 
+                # Validate BEFORE persisting to avoid storing a bad cookie
                 current_client.update_cookie(cookies)
+                await hass.async_add_executor_job(current_client.test_connection)
+                _LOGGER.debug("New cookie validation successful")
 
                 if hasattr(active_entry, 'runtime_data') and active_entry.runtime_data:
                     coord = active_entry.runtime_data
@@ -394,9 +398,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
 
                 _LOGGER.info("Scheduled cookie refresh completed successfully")
-
-                await hass.async_add_executor_job(current_client.test_connection)
-                _LOGGER.debug("New cookie validation successful")
 
                 try:
                     await async_update_statistics_manual(type('Call', (), {'data': {'days_back': 0}})())
@@ -438,14 +439,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Scheduled cookie refresh task cancelled cleanly")
 
     # Start the scheduled cookie refresh task AFTER all services are registered
-    # Use a global flag that persists across reloads to prevent multiple tasks
-    if 'global_scheduled_task_running' not in hass.data:
-        hass.data['global_scheduled_task_running'] = True
+    # Use a flag under hass.data[DOMAIN] to prevent multiple tasks across reloads
+    if not hass.data[DOMAIN].get('_scheduled_task_running'):
+        hass.data[DOMAIN]['_scheduled_task_running'] = True
         task = hass.async_create_task(refresh_cookies_scheduled())
-        hass.data['global_scheduled_task'] = task
-        _LOGGER.debug("Started global scheduled cookie refresh task")
+        hass.data[DOMAIN]['_scheduled_task'] = task
+        _LOGGER.debug("Started scheduled cookie refresh task")
     else:
-        _LOGGER.debug("Global scheduled cookie refresh task already running, skipping duplicate")
+        _LOGGER.debug("Scheduled cookie refresh task already running, skipping duplicate")
 
     return True
 
@@ -744,24 +745,23 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         hass.data[DOMAIN].pop('coordinator', None)
 
-    # Clean up global scheduled task flag if this is the last instance
-    if 'global_scheduled_task_running' in hass.data:
-        # Check if there are other instances running
+    # Clean up scheduled task if this is the last instance
+    domain_data = hass.data.get(DOMAIN, {})
+    if domain_data.get('_scheduled_task_running'):
         other_instances = [e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id]
         if not other_instances:
-            # Cancel the running scheduled task
-            if 'global_scheduled_task' in hass.data:
+            task = domain_data.get('_scheduled_task')
+            if task is not None:
                 try:
-                    task = hass.data['global_scheduled_task']
                     if not task.done():
                         task.cancel()
-                        _LOGGER.debug("Cancelled global scheduled cookie refresh task")
+                        _LOGGER.debug("Cancelled scheduled cookie refresh task")
                 except Exception as e:
-                    _LOGGER.warning("Error cancelling global scheduled task: %s", e)
-                del hass.data['global_scheduled_task']
+                    _LOGGER.warning("Error cancelling scheduled task: %s", e)
+                domain_data.pop('_scheduled_task', None)
 
-            del hass.data['global_scheduled_task_running']
-            _LOGGER.debug("Cleaned up global scheduled task flag (last instance)")
+            domain_data.pop('_scheduled_task_running', None)
+            _LOGGER.debug("Cleaned up scheduled task flag (last instance)")
 
     # Only remove services when the last entry is being unloaded
     remaining = [e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id]

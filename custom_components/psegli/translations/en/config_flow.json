@@ -12,6 +12,7 @@
   "error": {
     "invalid_auth": "Invalid authentication. Please check your username and password and try again.",
     "login_failed": "Login failed. Please check your credentials and try again.",
+    "cannot_connect": "Cannot reach PSEG. Please check your internet connection and try again.",
     "unknown": "Unexpected error occurred.",
     "captcha_required": "reCAPTCHA challenge triggered. Please try again — it usually passes after a few attempts.",
     "addon_unavailable": "Addon not available. Please ensure the PSEG automation addon is installed and running.",

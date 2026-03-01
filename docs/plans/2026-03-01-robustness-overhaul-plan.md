@@ -13,7 +13,34 @@
 | 2 | **COMPLETE** | `395b51e` | psegli.py purely sync, all callers use async_add_executor_job |
 | 3 | **COMPLETE** | `2f9e8f3` | get_last_statistics, CancelledError, service guards |
 | 4 | **COMPLETE** | `732e5f9` | 25 tests across 3 files, all passing |
+| 4.5 | **COMPLETE** | `c3f0fc3` | Codex review fixes: cookie logging, service lifecycle, docs |
+| 4.6 | IN PROGRESS | — | Self-review: medium priority fixes |
 | 5 | Pending | — | Post-deploy |
+
+### Phase 4.6 — Combined Self-Review + Agent Review Findings
+
+**High priority (fix now):**
+- 4.6.1: CLAUDE.md is completely stale — still describes MFA, Brave search, ThreadPoolExecutor, 7-day lookback, no tests
+- 4.6.2: `PSEGLIError` uncaught in `async_setup_entry` — should raise `ConfigEntryNotReady` for HA retry
+- 4.6.3: Global scheduled task flags at `hass.data` root — move under `hass.data[DOMAIN]`
+- 4.6.4: Cookie persisted BEFORE validation — `async_update_entry` called before `test_connection()`
+- 4.6.5: Cookie value prefix shown in config_flow.py options UI (`[:50]`)
+
+**Medium priority (fix now):**
+- 4.6.6: Addon README response format shows cookies as JSON object (actual: string with MM_SID)
+- 4.6.7: Redundant `if DOMAIN not in hass.data` guard (already set by `setdefault`)
+- 4.6.8: Unused imports in `config_flow.py` (`load_yaml`, `HomeAssistantError`) and `__init__.py` (`callback`)
+- 4.6.9: Unused `self._username`/`self._password` attrs in config_flow
+- 4.6.10: `PSEGLIError` not caught distinctly in `config_flow.py` `test_connection` calls
+
+**Low priority (future):**
+- Fake `Call` object pattern (`type("Call", (), {"data": ...})()`) — fragile if handler accesses other attrs
+- `_process_chart_data` has excessive defensive coding (callable check, post-write verification query)
+- `await hass.async_create_task(hass.services.async_call(...))` double-wrapping — can just `await` directly
+- `pytz` → `zoneinfo` migration (Python 3.9+ stdlib)
+- +4h timestamp shift needs DST investigation before next DST change
+- `run.py` test-cookie endpoint blocks event loop with sync `requests`
+- Missing test coverage for `__init__.py` lifecycle and `config_flow.py`
 
 ### Learnings & Adjustments
 

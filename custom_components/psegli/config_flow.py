@@ -5,11 +5,9 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util.yaml import load_yaml
 
 from .const import DOMAIN, CONF_COOKIE, CONF_USERNAME, CONF_PASSWORD
-from .psegli import PSEGLIClient
+from .psegli import PSEGLIClient, PSEGLIError
 from .exceptions import InvalidAuth
 from .auto_login import get_fresh_cookies, CAPTCHA_REQUIRED
 
@@ -21,11 +19,6 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
     has_options = True
-
-    def __init__(self) -> None:
-        """Initialize the config flow."""
-        self._username: str | None = None
-        self._password: str | None = None
 
     @staticmethod
     @callback
@@ -85,6 +78,9 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except PSEGLIError as e:
+                _LOGGER.warning("PSEG unreachable: %s", e)
+                errors["base"] = "cannot_connect"
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception: %s", e)
                 errors["base"] = "unknown"
@@ -177,6 +173,9 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
 
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+            except PSEGLIError as e:
+                _LOGGER.warning("PSEG unreachable during reconfigure: %s", e)
+                errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception during reconfigure")
                 errors["base"] = "unknown"
@@ -186,7 +185,7 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
             data_schema=self._get_options_schema(),
             errors=errors,
             description_placeholders={
-                "current_cookie": self.config_entry.data.get(CONF_COOKIE, "")[:50] + "..." if self.config_entry.data.get(CONF_COOKIE) else "None"
+                "current_cookie": "Set" if self.config_entry.data.get(CONF_COOKIE) else "None"
             },
         )
 

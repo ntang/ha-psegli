@@ -69,11 +69,17 @@ username=your_email@example.com&password=your_password
 ```json
 {
   "success": true,
-  "cookies": {
-    "ASP.NET_SessionId": "abc123...",
-    "__RequestVerificationToken": "xyz789...",
-    "other_cookies": "..."
-  }
+  "cookies": "MM_SID=abc123; __RequestVerificationToken=xyz789; ..."
+}
+```
+
+On failure:
+
+```json
+{
+  "success": false,
+  "error": "Login failed",
+  "captcha_required": true
 }
 ```
 
