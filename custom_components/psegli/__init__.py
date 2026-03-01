@@ -28,75 +28,21 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = []
 
 async def get_last_cumulative_kwh(hass: HomeAssistant, statistic_id: str, before_timestamp: datetime) -> float:
-    """Get the last recorded cumulative kWh for a given statistic_id BEFORE a specific timestamp."""
+    """Get the last recorded cumulative kWh for a given statistic_id.
+
+    Uses get_last_statistics which returns the most recent entry regardless
+    of age — no fixed lookback window, works even if offline for weeks.
+    """
     try:
-        from homeassistant.components.recorder.statistics import statistics_during_period
-
-        # Look for statistics in a window BEFORE our timestamp to find the last cumulative sum
-        # Use a 7-day lookback window to ensure we find data even for longer backfills
-        lookback_start = before_timestamp - timedelta(days=7)
-
-        # Ensure timestamps are timezone-aware for consistent comparison
-        if before_timestamp.tzinfo is None:
-            before_timestamp = before_timestamp.replace(tzinfo=timezone.utc)
-        if lookback_start.tzinfo is None:
-            lookback_start = lookback_start.replace(tzinfo=timezone.utc)
-
-        try:
-            # Get statistics in the lookback window
-            stats_in_window = await get_instance(hass).async_add_executor_job(
-                statistics_during_period,
-                hass,
-                lookback_start,  # Start 7 days before our target timestamp
-                before_timestamp,  # End at our target timestamp
-                [statistic_id],    # Only get our specific statistic
-                "hour",            # Hourly granularity
-                None,              # No additional filters
-                {"start", "sum"}   # Need start time and sum values
-            )
-        except Exception as e:
-            _LOGGER.error("Error calling statistics_during_period: %s", e)
-            stats_in_window = None
-
-        if stats_in_window and statistic_id in stats_in_window and stats_in_window[statistic_id]:
-            # Find the most recent statistic BEFORE our timestamp
-            valid_stats = []
-            for stat in stats_in_window[statistic_id]:
-                if 'sum' in stat and stat['sum'] is not None and 'start' in stat:
-                    # Handle both string ISO format and float Unix timestamp
-                    if isinstance(stat['start'], str):
-                        stat_time = datetime.fromisoformat(stat['start'])
-                        # Ensure timezone awareness
-                        if stat_time.tzinfo is None:
-                            stat_time = stat_time.replace(tzinfo=timezone.utc)
-                    elif isinstance(stat['start'], (int, float)):
-                        stat_time = datetime.fromtimestamp(stat['start'], tz=timezone.utc)
-                    else:
-                        _LOGGER.warning("Unexpected start time format: %s (type: %s)", stat['start'], type(stat['start']))
-                        continue
-
-                    # Ensure both timestamps are timezone-aware for comparison
-                    if stat_time.tzinfo is None:
-                        stat_time = stat_time.replace(tzinfo=timezone.utc)
-
-                    if stat_time < before_timestamp:
-                        valid_stats.append((stat_time, stat['sum']))
-
-            if valid_stats:
-                # Sort by time and get the most recent one
-                valid_stats.sort(key=lambda x: x[0])
-                most_recent_time, most_recent_sum = valid_stats[-1]
-
-                _LOGGER.debug("Found last cumulative sum: %.6f for %s at %s (before %s)",
-                             most_recent_sum, statistic_id, most_recent_time, before_timestamp)
-                return most_recent_sum
-            else:
-                _LOGGER.debug("No valid statistics found before %s for %s", before_timestamp, statistic_id)
-                return 0.0
-        else:
-            _LOGGER.debug("No statistics found in lookback window for %s", statistic_id)
-            return 0.0
-
+        last_stats = await get_instance(hass).async_add_executor_job(
+            get_last_statistics, hass, 1, statistic_id, True, {"sum"}
+        )
+        if last_stats and statistic_id in last_stats:
+            result = last_stats[statistic_id][0]["sum"]
+            _LOGGER.debug("Last cumulative sum for %s: %.6f", statistic_id, result)
+            return result
+        _LOGGER.debug("No prior statistics for %s, starting from 0", statistic_id)
+        return 0.0
     except Exception as e:
         _LOGGER.warning("Could not get last statistics for %s: %s, starting from 0", statistic_id, e)
         return 0.0
@@ -231,12 +177,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as e:
             _LOGGER.error("Failed to update statistics: %s", e)
 
-    # Register the manual service
-    hass.services.async_register(
-        DOMAIN,
-        "update_statistics",
-        async_update_statistics_manual
-    )
+    # Register the manual service (guard against double-registration on reload)
+    if not hass.services.has_service(DOMAIN, "update_statistics"):
+        hass.services.async_register(
+            DOMAIN,
+            "update_statistics",
+            async_update_statistics_manual
+        )
 
     # Register the cookie refresh service
     async def async_refresh_cookie(call: Any) -> None:
@@ -344,11 +291,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             )
 
-    hass.services.async_register(
-        DOMAIN,
-        "refresh_cookie",
-        async_refresh_cookie
-    )
+    if not hass.services.has_service(DOMAIN, "refresh_cookie"):
+        hass.services.async_register(
+            DOMAIN,
+            "refresh_cookie",
+            async_refresh_cookie
+        )
 
     # Set up scheduled cookie refresh at XX:00 and XX:30
     async def async_scheduled_cookie_refresh() -> None:
@@ -439,22 +387,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Use standard Home Assistant approach: refresh cookies at XX:00 and XX:30
     async def refresh_cookies_scheduled():
         """Refresh cookies at scheduled times (XX:00 and XX:30)."""
-        while True:
-            now = datetime.now()
+        try:
+            while True:
+                now = datetime.now()
 
-            if now.minute < 30:
-                next_refresh = now.replace(minute=30, second=0, microsecond=0)
-            else:
-                # Next refresh at XX:00 (next hour)
-                next_refresh = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+                if now.minute < 30:
+                    next_refresh = now.replace(minute=30, second=0, microsecond=0)
+                else:
+                    next_refresh = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
 
-            wait_seconds = (next_refresh - now).total_seconds()
-            _LOGGER.debug("Next scheduled cookie refresh at %s (in %.0f seconds)",
-                         next_refresh.strftime("%H:%M"), wait_seconds)
+                wait_seconds = (next_refresh - now).total_seconds()
+                _LOGGER.debug("Next scheduled cookie refresh at %s (in %.0f seconds)",
+                             next_refresh.strftime("%H:%M"), wait_seconds)
 
-            await asyncio.sleep(wait_seconds)
+                await asyncio.sleep(wait_seconds)
 
-            await async_scheduled_cookie_refresh()
+                try:
+                    await async_scheduled_cookie_refresh()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    _LOGGER.exception("Scheduled cookie refresh failed")
+        except asyncio.CancelledError:
+            _LOGGER.debug("Scheduled cookie refresh task cancelled cleanly")
 
     # Start the scheduled cookie refresh task AFTER all services are registered
     # Use a global flag that persists across reloads to prevent multiple tasks
@@ -781,8 +736,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             del hass.data['global_scheduled_task_running']
             _LOGGER.debug("Cleaned up global scheduled task flag (last instance)")
 
-    # Remove the services
-    hass.services.async_remove(DOMAIN, "update_statistics")
-    hass.services.async_remove(DOMAIN, "refresh_cookie")
+    # Only remove services when the last entry is being unloaded
+    remaining = [e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id]
+    if not remaining:
+        hass.services.async_remove(DOMAIN, "update_statistics")
+        hass.services.async_remove(DOMAIN, "refresh_cookie")
 
     return True

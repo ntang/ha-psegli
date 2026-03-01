@@ -11,7 +11,7 @@
 |-------|--------|--------|-------|
 | 1 | **COMPLETE** | `fb0f070` | All 5 sub-tasks done. 596 insertions, 1508 deletions across 8 files. |
 | 2 | **COMPLETE** | (pending commit) | psegli.py purely sync, all callers use async_add_executor_job |
-| 3 | Pending | — | |
+| 3 | **COMPLETE** | (pending commit) | get_last_statistics, CancelledError, service guards |
 | 4 | Pending | — | |
 | 5 | Pending | — | Post-deploy |
 
@@ -21,6 +21,7 @@
 - **Phase 1.3-1.4 (integration side):** MFA references were spread across 6 files (auto_login.py, config_flow.py, __init__.py, const.py, services.yaml, translations). All removed in one pass. The `enter_mfa_code` service was also removed from `__init__.py` unload.
 - **Phase 1 adjustment:** The plan listed 1.5 (harden cleanup/setup_browser) as a separate step, but it was already implemented as part of 1.1 — `cleanup()` nulls all refs, guards double-close, and `setup_browser()` calls `cleanup()` on failure. No separate step needed.
 - **Phase 1 adjustment:** `config_flow.py` instance attrs `self._username`/`self._password` were added to `__init__()` but turned out to be unused — with MFA removed, there's no multi-step flow that needs to carry credentials between steps. The attrs are declared but harmless.
+- **Phase 3 learnings:** The shadowed `local_tz` (3.4) was already gone from the Phase 1 `__init__.py` rewrite. The +4h timestamp shift (3.5) already has a TODO comment from Phase 2. `get_last_cumulative_kwh` went from ~70 lines (7-day lookback with manual timestamp parsing) to ~15 lines using `get_last_statistics`. Service registration now guards with `has_service()` and unload only removes services when the last config entry is being unloaded. The scheduled task loop now properly re-raises `CancelledError` to allow clean shutdown.
 - **Phase 2 learnings:** Made `PSEGLIClient` purely synchronous — removed `test_connection` async wrapper and `get_usage_data` async wrapper (both used `ThreadPoolExecutor`). Renamed the old `_test_connection_sync` to just `test_connection` and `_get_usage_data_sync` to `get_usage_data`. All 7 callsites in `__init__.py` and 3 in `config_flow.py` updated to use `hass.async_add_executor_job`. Also added `REQUEST_TIMEOUT = 30` constant and `timeout=REQUEST_TIMEOUT` to all 4 `requests` calls. Separated network errors (`ConnectionError`/`Timeout` → `PSEGLIError`) from auth errors (redirect to login → `InvalidAuth`). The `re` module import was moved to top of file (was previously `import re` inside a function). Added the Phase 3.5 TODO comment on the +4h timestamp shift.
 
 ---
@@ -200,7 +201,7 @@ elif days_back == 0:
 
 ---
 
-## Phase 3: Statistics and Scheduling Integrity
+## Phase 3: Statistics and Scheduling Integrity — COMPLETE
 
 *Fix data corruption risks and scheduling robustness.*
 
