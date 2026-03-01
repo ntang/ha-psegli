@@ -14,7 +14,7 @@ import uvicorn
 from fastapi import FastAPI, Form
 from pydantic import BaseModel
 
-from auto_login import LoginResult, get_fresh_cookies
+from auto_login import get_fresh_cookies
 
 # Set HEADED=1 to run browser in headed mode (visible) for debugging
 HEADED = os.environ.get("HEADED", "").lower() in ("1", "true", "yes")
@@ -22,7 +22,7 @@ HEADED = os.environ.get("HEADED", "").lower() in ("1", "true", "yes")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PSEG Long Island Automation", version="2.0.0")
+app = FastAPI(title="PSEG Long Island Automation", version="2.4.5")
 
 # Prevent concurrent login attempts (Playwright can only run one at a time)
 _login_lock = asyncio.Lock()
@@ -96,4 +96,4 @@ async def login_form(
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, workers=1)

@@ -16,6 +16,7 @@
 | 4.5 | **COMPLETE** | `c3f0fc3` | Codex review fixes: cookie logging, service lifecycle, docs |
 | 4.6 | **COMPLETE** | `08a4c24` | Self-review: broken unload, validate-before-persist, unused imports |
 | 4.7 | **COMPLETE** | `3870404` | Codex round 2: multi-entry guard, timestamps, addon URL, test-cookie, verification overhead |
+| 4.8 | **COMPLETE** | pending | Proactive self-review: ~30 findings from 4 parallel review agents |
 | 5 | Pending | — | Post-deploy |
 
 ### Phase 4.6 — Combined Self-Review + Agent Review Findings
@@ -56,6 +57,48 @@
 
 **Medium priority (future):**
 - 4.7.6: Additional test coverage — tests for `__init__.py` lifecycle (setup/unload/service handlers) and config flow
+
+### Phase 4.8 — Proactive Self-Review (4 Parallel Review Agents)
+
+Ran 4 parallel code review agents covering all source files. ~30 raw findings consolidated below.
+
+**High priority — correctness (fixed):**
+- 4.8.1: **CRITICAL** — `RequestException` catch in `get_usage_data` raised `InvalidAuth` instead of `PSEGLIError`. Transient HTTP errors (e.g., 503) were triggering `ConfigEntryAuthFailed`, permanently disabling the integration instead of retrying. Fixed: now raises `PSEGLIError`.
+- 4.8.2: Duplicate `test_connection()` call in `get_usage_data` — `_get_dashboard_page` already checks for login redirect. Removed the redundant call and added explicit redirect check to `_get_dashboard_page`.
+- 4.8.3: Client stored in `hass.data` BEFORE `test_connection()` validation — if validation fails, stale client remains. Fixed: store client only after successful validation.
+- 4.8.4: No cookie rollback on `test_connection()` failure — `update_cookie()` changes the live client, but if validation fails the old cookie is lost. Fixed: save old cookie, restore on failure.
+- 4.8.5: `datetime.now()` without timezone in scheduler — DST fallback could produce negative sleep duration. Fixed: `datetime.now(tz=timezone.utc)` with `max(0, wait_seconds)`.
+- 4.8.6: Dead `_async_update_data` coordinator method and `UpdateFailed` import — leftover from a previous architecture. Removed.
+- 4.8.7: Fake `Call` object pattern (`type("Call", (), {"data": {...}})()`). Extracted `_do_update_statistics(hass, days_back)` from service handler — eliminates brittle fake object.
+- 4.8.8: `await task` missing after `task.cancel()` in unload — task may not be fully cancelled before unload completes. Fixed: `task.cancel(); await task` with `CancelledError` catch.
+
+**Medium priority — robustness (fixed):**
+- 4.8.9: `_get_active_entry` logged `_LOGGER.error` for expected condition (no loaded entry). Changed to `_LOGGER.warning`.
+- 4.8.10: `PLATFORMS: list[Platform] = []` and `Platform` import — dead code since integration has no entity platforms. Removed.
+- 4.8.11: `pytz.timezone()` called via `async_add_executor_job` unnecessarily — it's a pure lookup, not I/O. Called directly.
+- 4.8.12: Dead `valid_points` string-parsing branch — unreachable code path for timestamp string parsing. Removed.
+- 4.8.13: `hass.data[DOMAIN].pop('coordinator', None)` in unload — no 'coordinator' key exists. Removed.
+- 4.8.14: `hasattr(entry, 'runtime_data')` guard added to unload (entry may not have been fully set up).
+- 4.8.15: `async_update_options` was a no-op — didn't apply cookie changes to the live client. Now updates the live `PSEGLIClient` instance.
+- 4.8.16: All `hass.async_create_task(hass.services.async_call(...))` replaced with direct `await hass.services.async_call(...)` — eliminates fire-and-forget error swallowing.
+- 4.8.17: `PSEGLIError` not caught in scheduled cookie validity check — now caught and falls through to refresh.
+- 4.8.18: `_LOGGER.exception("Unexpected exception: %s", e)` in config_flow — `exception()` already includes traceback, redundant `%s` with `e`. Simplified.
+- 4.8.19: Dead constants in `const.py` — `DEFAULT_NAME`, `DEFAULT_SCAN_INTERVAL`, `CONF_ADDON_URL`, all `SENSOR_*`, all `ATTR_*`. Removed.
+- 4.8.20: `run.py` version was `"2.0.0"` — updated to `"2.4.5"` to match release. Added `workers=1` to `uvicorn.run()`.
+- 4.8.21: Dead `LoginResult` import in `run.py`. Removed.
+- 4.8.22: Unused `Optional` and `Dict` imports in `psegli.py` — modernized to `datetime | None` and `dict[str, Any]`.
+- 4.8.23: Translation file missing `init` step for options flow, had dead `login_failed` error. Fixed.
+
+**Low priority (documented, not fixed — future work):**
+- OptionsFlow `__init__` uses deprecated pattern (accepts `config_entry` manually instead of HA's new pattern)
+- Test improvements: flaky concurrent test (`_login_lock` not reset between tests), weak source-inspection assertions, sync tests marked `@pytest.mark.asyncio`
+- Non-serializable `datetime` objects in `_parse_data` return dict (would fail JSON serialization)
+- `PSEGLIError` import path inconsistency (both `exceptions.py` and `psegli.py` define/export it)
+- Addon `auto_login.py`: `on_response` listener never removed (stacks on retry)
+- Addon `auto_login.py`: non-JSON response from login silently treated as progress
+- Integration `auto_login.py`: TOCTOU gap in health check + generic `Exception` handler
+- CAPTCHA sentinel string vs `LoginResult` enum mismatch
+- `strings.json` missing at component root (only `translations/en/config_flow.json` exists)
 
 ### Learnings & Adjustments
 

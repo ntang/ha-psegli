@@ -7,13 +7,12 @@ import json
 import logging
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pytz
 import requests
 from bs4 import BeautifulSoup
 
-from .const import ATTR_COMPARISON, ATTR_DESCRIPTION, ATTR_LAST_UPDATE
 from .exceptions import InvalidAuth, PSEGLIError
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,6 +87,10 @@ class PSEGLIClient:
         if dashboard_response.status_code != 200:
             raise InvalidAuth("Failed to get Dashboard page")
 
+        # Check if redirected to login page (cookie expired mid-flow)
+        if "login" in dashboard_response.url.lower() or "signin" in dashboard_response.url.lower():
+            raise InvalidAuth("Cookie rejected — redirected to login page")
+
         token_match = re.search(
             r'name="__RequestVerificationToken" type="hidden" value="([^"]+)"',
             dashboard_response.text,
@@ -159,18 +162,16 @@ class PSEGLIClient:
 
     def get_usage_data(
         self,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         days_back: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get usage data from PSEG.
 
         If start_date and end_date are provided, they are used directly.
         Otherwise, dates are calculated from days_back.
         """
         try:
-            self.test_connection()
-
             # Use caller-provided dates if both are given
             if start_date is not None and end_date is not None:
                 pass  # use as-is
@@ -184,6 +185,7 @@ class PSEGLIClient:
             _LOGGER.debug("Date range: days_back=%d, start=%s, end=%s",
                         days_back, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 
+            # _get_dashboard_page checks for login redirect (auth gate)
             _, request_token = self._get_dashboard_page()
             self._setup_chart_context(request_token, start_date, end_date)
             chart_data = self._get_chart_data()
@@ -195,13 +197,13 @@ class PSEGLIClient:
             _LOGGER.error("Network error getting usage data: %s", err)
             raise PSEGLIError(f"Network error: {err}") from err
         except requests.exceptions.RequestException as err:
-            _LOGGER.error("Failed to get usage data: %s", err)
-            raise InvalidAuth("Failed to get usage data") from err
+            _LOGGER.error("HTTP error getting usage data: %s", err)
+            raise PSEGLIError(f"HTTP error: {err}") from err
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to parse JSON — likely expired cookie: %s", err)
             raise InvalidAuth("Cookie expired — server returned HTML instead of JSON") from err
 
-    def _parse_data(self, widget_data: Dict[str, Any], chart_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _parse_data(self, widget_data: dict[str, Any], chart_data: dict[str, Any]) -> dict[str, Any]:
         """Parse the widget and chart data."""
         result = {
             "widgets": {},

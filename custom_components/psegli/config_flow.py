@@ -85,8 +85,8 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except PSEGLIError as e:
                 _LOGGER.warning("PSEG unreachable: %s", e)
                 errors["base"] = "cannot_connect"
-            except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception: %s", e)
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception during setup")
                 errors["base"] = "unknown"
 
         return self.async_show_form(

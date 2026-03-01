@@ -87,10 +87,7 @@ class TestPSEGLIClient:
         chart_data_json = json.dumps({"Data": {"series": []}})
 
         responses = [
-            # test_connection GET
-            MagicMock(status_code=200, url="https://mysmartenergy.psegliny.com/Dashboard",
-                     text=dashboard_html, raise_for_status=MagicMock()),
-            # _get_dashboard_page GET
+            # _get_dashboard_page GET (also serves as auth gate)
             MagicMock(status_code=200, url="https://mysmartenergy.psegliny.com/Dashboard",
                      text=dashboard_html, raise_for_status=MagicMock()),
             # _get_chart_data GET

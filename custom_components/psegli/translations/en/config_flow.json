@@ -7,11 +7,17 @@
         "username": "Username/Email",
         "password": "Password"
       }
+    },
+    "init": {
+      "title": "Reconfigure PSEG Long Island",
+      "description": "Current cookie status: {current_cookie}",
+      "data": {
+        "cookie": "Authentication Cookie (leave empty for auto-refresh)"
+      }
     }
   },
   "error": {
     "invalid_auth": "Invalid authentication. Please check your username and password and try again.",
-    "login_failed": "Login failed. Please check your credentials and try again.",
     "cannot_connect": "Cannot reach PSEG. Please check your internet connection and try again.",
     "unknown": "Unexpected error occurred.",
     "captcha_required": "reCAPTCHA challenge triggered. Please try again — it usually passes after a few attempts.",
@@ -20,6 +26,6 @@
     "credentials_not_found": "No username or password configured. Please reconfigure the integration."
   },
   "abort": {
-    "already_configured": "Device is already configured."
+    "already_configured": "PSEG Long Island is already configured."
   }
 }
