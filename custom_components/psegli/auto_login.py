@@ -55,11 +55,11 @@ async def _attempt_login(
 
     Returns:
         Cookie string on success, CAPTCHA_REQUIRED sentinel, or None on
-        functional failure (invalid credentials, unknown addon error).
+        functional failure (invalid credentials, 4xx, unknown addon error).
 
     Raises:
         aiohttp.ClientError or asyncio.TimeoutError on transport failures
-        (these are retryable by the caller).
+        and 5xx server errors (these are retryable by the caller).
     """
     async with session.post(
         f"{DEFAULT_ADDON_URL}/login",
@@ -80,7 +80,16 @@ async def _attempt_login(
                 result.get("error", "Unknown error"),
             )
             return None
+        elif resp.status >= 500:
+            # Server errors are transient — raise so the retry loop catches it.
+            raise aiohttp.ClientResponseError(
+                resp.request_info,
+                resp.history,
+                status=resp.status,
+                message=f"Server error {resp.status}",
+            )
         else:
+            # 4xx and other client errors are terminal
             logger.error("Addon request failed with status %s", resp.status)
             return None
 
@@ -91,20 +100,21 @@ async def get_fresh_cookies(
 ) -> Optional[str]:
     """Get fresh cookies using the automation addon.
 
-    Transport failures (connection error, timeout, server disconnected) are
-    retried up to _MAX_LOGIN_RETRIES times with jittered backoff. Terminal
-    functional responses (captcha_required, invalid credentials) are returned
-    immediately without retry.
+    Transport failures (connection error, timeout, server disconnected, 5xx)
+    are retried up to _MAX_LOGIN_RETRIES times with jittered backoff. Terminal
+    functional responses (captcha_required, invalid credentials, 4xx) are
+    returned immediately without retry.
+
+    Note: No internal health check gate — callers that want fast-fail
+    (e.g. scheduled refresh, manual refresh) already call
+    check_addon_health() externally. Removing the gate here ensures
+    transient /health failures don't bypass the retry loop.
 
     Returns:
         Cookie string on success, CAPTCHA_REQUIRED when reCAPTCHA challenge
         is triggered (retry usually resolves it), or None on failure.
     """
     logger.debug("Requesting fresh cookies from PSEG automation addon...")
-
-    if not await check_addon_health():
-        logger.warning("Addon not available or unhealthy, cannot get fresh cookies")
-        return None
 
     timeout = aiohttp.ClientTimeout(total=120)
     login_data = {
