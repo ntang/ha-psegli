@@ -62,6 +62,13 @@ Phases merged to `main`:
 
 As of the plan completion, remaining items are hygiene-level (Very Low priority), not core auth correctness blockers.
 
+## Known Limitations and Edge Cases
+
+For unresolved operational limitations (CAPTCHA/manual fallback, add-on disconnects,
+chart-context auth edge cases, and external upstream dependency risks), see:
+- [`docs/known-issues.md`](known-issues.md)
+- [`docs/cookie-login-playbook.md`](cookie-login-playbook.md)
+
 ## Related Files
 
 - Add-on login flow: [`../addons/psegli-automation/auto_login.py`](../addons/psegli-automation/auto_login.py)

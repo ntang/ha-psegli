@@ -209,11 +209,15 @@ Then:
 2. If refresh fails with add-on connectivity errors (`Server disconnected`), use manual cookie mode immediately.
 3. Validate recovery with `psegli.update_statistics` (`days_back: 0`).
 
+For unresolved limitations and external-dependency edge cases, see:
+- [`docs/known-issues.md`](docs/known-issues.md)
+
 ## Related Docs
 
 - Root overview: [`README.md`](README.md)
 - Add-on details: [`addons/psegli-automation/README.md`](addons/psegli-automation/README.md)
 - Integration details: [`custom_components/psegli/README.md`](custom_components/psegli/README.md)
 - Cookie/login details: [`docs/cookie-login-playbook.md`](docs/cookie-login-playbook.md)
+- Known issues and edge cases: [`docs/known-issues.md`](docs/known-issues.md)
 - Overhaul plan: [`docs/plans/2026-03-01-robustness-overhaul-plan.md`](docs/plans/2026-03-01-robustness-overhaul-plan.md)
 - Auth migration notes: [`docs/auth-overhaul.md`](docs/auth-overhaul.md)

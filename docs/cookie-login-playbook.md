@@ -4,6 +4,9 @@ Use this document when the integration needs a manual cookie, or when you want
 to generate/validate cookies with local scripts before entering them in Home
 Assistant.
 
+For unresolved limitations and non-fixable edge cases, see:
+- [`docs/known-issues.md`](known-issues.md)
+
 ## Choose a Path
 
 1. Preferred: keep the add-on running and let `psegli.refresh_cookie` handle it.
@@ -140,3 +143,9 @@ days_back: 0
 - Treat cookie strings as credentials.
 - Do not paste cookie values into tickets, chat logs, or screenshots.
 - Regenerate cookie if exposed.
+
+## Related Docs
+
+- Known issues and edge cases: [`docs/known-issues.md`](known-issues.md)
+- Install/update guide: [`INSTALLATION.md`](../INSTALLATION.md)
+- HAOS cutover guide: [`docs/haos-migration-cutover.md`](haos-migration-cutover.md)

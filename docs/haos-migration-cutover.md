@@ -390,5 +390,6 @@ If any critical validation step fails and you need immediate recovery:
 - Overview: `README.md`
 - Installation: `INSTALLATION.md`
 - Cookie/login playbook: `docs/cookie-login-playbook.md`
+- Known issues and edge cases: `docs/known-issues.md`
 - Auth migration background: `docs/auth-overhaul.md`
 - Full overhaul plan and commit history: `docs/plans/2026-03-01-robustness-overhaul-plan.md`

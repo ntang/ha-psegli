@@ -33,6 +33,8 @@ Detailed implementation rationale and phase-by-phase history:
 - [`docs/plans/2026-03-01-robustness-overhaul-plan.md`](docs/plans/2026-03-01-robustness-overhaul-plan.md)
 - [`docs/plans/2026-03-02-auth-refresh-stabilization-plan.md`](docs/plans/2026-03-02-auth-refresh-stabilization-plan.md)
 - [`docs/auth-overhaul.md`](docs/auth-overhaul.md)
+- Known limitations and unresolved edge cases:
+  [`docs/known-issues.md`](docs/known-issues.md)
 
 ## Installation
 
@@ -123,6 +125,14 @@ python -m pytest -q
 4. No new usage data
 - Check Home Assistant logs for `custom_components.psegli`
 - Run `psegli.update_statistics` with `days_back: 0`
+
+## Known Issues and Edge Cases
+
+Known unresolved limitations are documented in:
+- [`docs/known-issues.md`](docs/known-issues.md)
+
+Most auth/cookie recovery actions are documented in:
+- [`docs/cookie-login-playbook.md`](docs/cookie-login-playbook.md)
 
 ## Repository
 
