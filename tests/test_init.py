@@ -1,7 +1,6 @@
 """Tests for __init__.py integration lifecycle."""
 
 import asyncio
-import inspect
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -238,12 +237,55 @@ class TestAsyncSetupEntry:
         # Should have sent a persistent notification
         mock_hass.services.async_call.assert_called()
 
-    def test_scheduled_check_uses_data_path_probe(self):
-        """Scheduled cookie-validity check should use data-path probe, not dashboard-only check."""
-        import custom_components.psegli as psegli_module
+    @patch("custom_components.psegli._process_chart_data", new_callable=AsyncMock)
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_scheduled_check_uses_data_path_probe(
+        self,
+        mock_health,
+        mock_fresh,
+        mock_client_cls,
+        mock_process_chart_data,
+        mock_hass,
+        mock_config_entry,
+    ):
+        """Scheduled cookie-validity check should call test_data_path()."""
+        captured_scheduler_coro = {}
 
-        source = inspect.getsource(psegli_module)
-        assert "current_client.test_data_path" in source
+        def _capture_background_task(hass, coro, name, eager_start=True):
+            captured_scheduler_coro["coro"] = coro
+            task = MagicMock()
+            task.done.return_value = False
+            task.cancel = MagicMock()
+            return task
+
+        mock_config_entry.async_create_background_task = MagicMock(
+            side_effect=_capture_background_task
+        )
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        mock_client = MagicMock()
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.test_data_path = MagicMock(return_value=True)
+        mock_client.get_usage_data = MagicMock(return_value={"chart_data": {}})
+        mock_client_cls.return_value = mock_client
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        assert "coro" in captured_scheduler_coro
+
+        setup_validation_calls = mock_client.test_connection.call_count
+
+        with patch(
+            "custom_components.psegli.asyncio.sleep",
+            new=AsyncMock(side_effect=[None, asyncio.CancelledError()]),
+        ):
+            await captured_scheduler_coro["coro"]
+
+        assert mock_client.test_data_path.call_count >= 1
+        # Scheduler validity checks should use test_data_path, not test_connection.
+        assert mock_client.test_connection.call_count == setup_validation_calls
 
 
 # ---------------------------------------------------------------------------
