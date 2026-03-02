@@ -24,6 +24,31 @@ Key operational changes:
 - Add-on performs automated login/refresh attempts
 - Scheduled cookie validity checks run at `XX:00` and `XX:30`
 
+## Upgrade Note (Legacy Broken Entry -> v2.5.0.1)
+
+If you are upgrading from an older broken install, update to at least `v2.5.0.1` before troubleshooting auth.
+
+Why this matters:
+- Older builds can leave a legacy config entry that fails when opening Configure/Reconfigure.
+- Symptom in logs:
+  - `AttributeError: property 'config_entry' of 'PSEGLIOptionsFlow' object has no setter`
+- UI symptom:
+  - Integration card shows `Failed to set up: Check the logs`
+  - Configure/Reconfigure does not present usable `username` / `password` flow
+
+Required recovery sequence:
+1. Update add-on + integration to `v2.5.0.1` or later.
+2. Restart Home Assistant.
+3. Delete the existing `PSEG Long Island` integration entry.
+4. Restart Home Assistant again.
+5. Add `PSEG Long Island` integration from scratch and enter `username` / `password`.
+6. Leave `cookie` blank on first setup so add-on login path is used.
+
+Validation after recovery:
+- Initial setup form includes username/password fields.
+- No options-flow `config_entry` setter exception appears in logs.
+- `psegli.refresh_cookie` and `psegli.update_statistics` are callable in Developer Tools.
+
 ## Success Criteria
 
 A successful cutover means all of the following are true:
@@ -128,10 +153,12 @@ Validation (must pass):
 Action:
 - If using HACS: update integration to latest `main`
 - If manual: replace `/config/custom_components/psegli` with latest folder from this repo
+- Ensure installed integration version is `2.5.0.1` or newer
 
 Validation (must pass):
 - Integration files on disk are updated
 - No duplicate old copy remains in another path
+- `custom_components/psegli/manifest.json` shows version `2.5.0.1` or newer
 
 ### Step 2.2 - Restart Home Assistant
 
