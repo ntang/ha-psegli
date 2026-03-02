@@ -1,0 +1,25 @@
+# Shared test and development dependencies.
+# Install from repo root so custom_components is importable.
+
+# Test runner
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Integration component (from manifest)
+requests>=2.31.0
+beautifulsoup4>=4.9.0
+
+# Integration auto_login + tests
+aiohttp>=3.8.0
+
+# Integration __init__ (statistics, timezone)
+pytz
+
+# Addon tests (run.py, auto_login.py) - need addon deps on path
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+playwright>=1.54.0
+playwright-stealth>=2.0.0
+httpx>=0.27.0

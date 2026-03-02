@@ -1,34 +1,8 @@
-# Test and development dependencies.
-# Install in a venv from repo root so custom_components is importable.
-#
-# Important:
-# - Use Python 3.12 for local test runs (matches current validated setup).
-# - Home Assistant is pinned to 2025.1.4 for deterministic tests.
-#   Newer HA releases (2026.x) currently require additional test-harness
-#   adaptation (frame helper + options flow API changes).
+# Stable, deterministic dev/test lane.
+# Use Python 3.12 with this file.
+# This is the merge-gating test environment.
 
-# Test runner
-pytest>=7.0.0
-pytest-asyncio>=0.21.0
+-r requirements-dev-common.txt
 
-# Integration component (from manifest)
-requests>=2.31.0
-beautifulsoup4>=4.9.0
-
-# Integration auto_login + tests
-aiohttp>=3.8.0
-
-# Integration __init__ (statistics, timezone)
-pytz
-
-# Home Assistant (for custom_components imports)
+# Home Assistant (stable test lane)
 homeassistant==2025.1.4
-
-# Addon tests (run.py, auto_login.py) - need addon deps on path
-fastapi>=0.104.0
-uvicorn>=0.24.0
-pydantic>=2.0.0
-python-multipart>=0.0.6
-playwright>=1.54.0
-playwright-stealth>=2.0.0
-httpx>=0.27.0

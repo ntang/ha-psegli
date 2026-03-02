@@ -127,6 +127,24 @@ Status:
 - Planned improvement: bounded automatic catch-up/backfill in stabilization
   plan.
 
+### 9) Latest Home Assistant test lane still has harness drift
+
+What happens:
+- Running tests against newer Home Assistant versions (2026.x) can fail due to
+  test-harness/API changes (for example frame helper and options-flow behavior).
+- This affects development/test reproducibility, not core runtime production
+  behavior of the custom component itself.
+
+Operator action:
+- Use the stable lane (`requirements-dev.txt`, HA `2025.1.4`) for deterministic
+  local validation and merge gating.
+- Run the recent lane (`requirements-dev-ha-recent.txt`, HA `2026.2.0`) as a
+  compatibility signal while migration work is ongoing.
+
+Status:
+- Known dev/test infrastructure limitation; forward-compatibility lane is
+  available but currently informational.
+
 ## Hard Boundaries (Not Fixable in Integration Alone)
 
 1. Solving CAPTCHA without human interaction.

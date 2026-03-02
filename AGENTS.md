@@ -12,12 +12,19 @@ PSEG Long Island energy usage integration for Home Assistant. Two components:
 ## Commands
 
 ```bash
-# Test environment: from repo root:
+# Stable test lane (merge-gating): from repo root:
 #   python3.12 -m venv .venv
 #   .venv/bin/pip install --upgrade pip
 #   .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q                     # run full test suite from repo root
+.venv/bin/python -m pytest -q                      # run full test suite from repo root
 .venv/bin/python -m pytest -q tests/test_init.py   # run a single test file
+#
+# Recent HA compatibility lane (informational):
+#   python3.13 -m venv .venv-ha-recent
+#   .venv-ha-recent/bin/pip install --upgrade pip
+#   .venv-ha-recent/bin/pip install -r requirements-dev-ha-recent.txt
+#   .venv-ha-recent/bin/python -m pytest -q
+# If python3.13 is unavailable locally, rely on the ha-recent CI lane.
 cd addons/psegli-automation && HEADED=1 python run.py  # add-on with visible browser
 docker build -t psegli-automation addons/psegli-automation/
 ```
@@ -69,6 +76,9 @@ Scheduled (:00/:30):
 
 ## Testing Pitfalls
 
+- Use `requirements-dev.txt` for deterministic runs and release gating.
+- Use `requirements-dev-ha-recent.txt` for forward-compatibility checks only until
+  HA 2026 harness migrations are complete.
 - HA `ConfigFlow.unique_id` is read-only. Set `flow._unique_id` in test mocks.
 - `mock_hass.async_add_executor_job` must actually run the sync function: `AsyncMock(side_effect=lambda f, *a: f(*a))`.
 - Unload tests: "remaining loaded entries" checks `hass.data[DOMAIN]` keys, not `async_entries()` (which includes disabled/unloaded).

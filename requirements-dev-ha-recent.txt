@@ -1,0 +1,9 @@
+# Recent Home Assistant compatibility lane.
+# Use Python 3.13+ with this file.
+# This lane is for forward-compatibility signal and may fail while
+# harness/API migrations are still in progress.
+
+-r requirements-dev-common.txt
+
+# Home Assistant (recent compatibility lane)
+homeassistant==2026.2.0

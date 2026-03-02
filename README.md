@@ -105,7 +105,7 @@ The robustness-overhaul branch work now merged to `main` includes test coverage 
 - config flow and options flow
 - PSEG client error handling
 
-**Set up a test environment** (from repo root):
+**Set up a stable, deterministic test environment** (from repo root):
 
 ```bash
 # Use Python 3.12 for the validated local test matrix.
@@ -115,9 +115,23 @@ python3.12 -m venv .venv
 ```
 
 Notes:
-- `requirements-dev.txt` pins Home Assistant to `2025.1.4` for deterministic test behavior.
-- Running tests against newer HA versions (2026.x) currently needs additional
-  test-harness updates.
+- `requirements-dev.txt` is the stable lane (Home Assistant `2025.1.4`) used for
+  merge-gating and deterministic local runs.
+- `requirements-dev-ha-recent.txt` is the compatibility lane (Home Assistant
+  `2026.2.0`) used to monitor forward-compatibility against newer HA changes.
+- Newer HA versions can fail due to test-harness API changes until adaptation is complete.
+
+Run the recent compatibility lane locally:
+
+```bash
+python3.13 -m venv .venv-ha-recent
+.venv-ha-recent/bin/pip install --upgrade pip
+.venv-ha-recent/bin/pip install -r requirements-dev-ha-recent.txt
+.venv-ha-recent/bin/python -m pytest -q
+```
+
+If `python3.13` is not available locally, use the `ha-recent` CI lane as the
+forward-compatibility signal.
 
 Run tests locally:
 
@@ -130,6 +144,9 @@ Or with system/other Python if dependencies are already installed:
 ```bash
 python -m pytest -q
 ```
+
+CI runs both lanes. The `stable` lane is required; `ha-recent` is informational
+until the remaining HA 2026 harness gaps are closed.
 
 ## Troubleshooting Quick Checks
 

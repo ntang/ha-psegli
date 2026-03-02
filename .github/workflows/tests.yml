@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    name: "pytest (${{ matrix.lane }})"
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.allow_failure }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: stable
+            python-version: "3.12"
+            requirements-file: requirements-dev.txt
+            allow_failure: false
+          - lane: ha-recent
+            python-version: "3.13"
+            requirements-file: requirements-dev-ha-recent.txt
+            allow_failure: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ${{ matrix.requirements-file }}
+
+      - name: Run tests
+        run: python -m pytest -q
