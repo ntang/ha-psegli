@@ -22,7 +22,7 @@ Add-on source repository:
 - `https://github.com/ntang/ha-psegli`
 
 In Home Assistant:
-1. Go to `Settings -> Add-ons -> Add-on Store`
+1. Go to `Settings -> Apps -> Install app`
 2. Open menu `... -> Repositories`
 3. Add `https://github.com/ntang/ha-psegli`
 4. Install `PSEG Long Island Automation`

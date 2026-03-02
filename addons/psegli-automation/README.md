@@ -18,7 +18,7 @@ This Home Assistant addon provides automated login services for PSEG Long Island
 
 1. **Add the custom repository:**
 
-   - Go to **Settings** → **Add-ons** → **Add-on Store**
+   - Go to **Settings** → **Apps** → **Install app**
    - Click the three dots menu (⋮) → **Repositories**
    - Add: `https://github.com/ntang/ha-psegli`
    - Click **Add**
@@ -32,7 +32,7 @@ This Home Assistant addon provides automated login services for PSEG Long Island
 ### **Option 2: Local Installation**
 
 1. **Copy to Addons Directory**: Copy this folder to your Home Assistant `addons` directory
-2. **Install Addon**: Go to Settings → Add-ons → Add-on Store → Local Add-ons
+2. **Install Addon**: Go to **Settings** → **Apps** → **Install app** (local app appears there)
 3. **Start Addon**: Click "Install" then "Start"
 
 ## API Endpoints

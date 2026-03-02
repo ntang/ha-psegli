@@ -1,7 +1,7 @@
 {
   "domain": "psegli",
   "name": "PSEG Long Island",
-  "documentation": "https://github.com/daswass/ha-psegli",
+  "documentation": "https://github.com/ntang/ha-psegli",
   "dependencies": [],
   "codeowners": ["@daswass"],
   "requirements": ["requests>=2.31.0", "beautifulsoup4>=4.9.0"],

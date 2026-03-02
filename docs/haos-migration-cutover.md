@@ -80,20 +80,20 @@ Validation (must pass):
 ### Step 1.1 - Ensure repository points to current project
 
 Action:
-1. Open `Settings -> Add-ons -> Add-on Store`.
+1. Open `Settings -> Apps -> Install app`.
 2. Click menu `...` (top-right) -> `Repositories`.
 3. Ensure this repository exists:
   - `https://github.com/ntang/ha-psegli`
 4. Remove old/incorrect repo entries if needed.
-5. Click `Add` / `Save`, then refresh the Add-on Store view.
+5. Click `Add` / `Save`, then refresh the Install app view.
 
 Validation (must pass):
-- `PSEG Long Island Automation` appears in Add-on Store from this repo
+- `PSEG Long Island Automation` appears in Install app from this repo
 
 ### Step 1.2 - Install or update the add-on
 
 Action:
-1. Open `PSEG Long Island Automation` in Add-on Store.
+1. Open `PSEG Long Island Automation` in Install app.
 2. Click `Install` (or `Update` if already installed).
 3. Open the `Info` tab and click `Start`.
 4. Toggle `Start on boot` to enabled.
