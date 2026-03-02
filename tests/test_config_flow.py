@@ -29,8 +29,10 @@ def _make_config_flow(hass):
 
 def _make_options_flow(hass, config_entry):
     """Create a PSEGLIOptionsFlow with injected hass."""
-    flow = PSEGLIOptionsFlow(config_entry)
+    flow = PSEGLIOptionsFlow()
     flow.hass = hass
+    # HA now injects config entry via internal _config_entry on options flows.
+    flow._config_entry = config_entry
     return flow
 
 
@@ -177,6 +179,13 @@ class TestPSEGLIConfigFlow:
 
 class TestPSEGLIOptionsFlow:
     """Tests for the options flow."""
+
+    async def test_options_flow_uses_ha_managed_config_entry(self, mock_config_entry):
+        """Options flow should be constructible without passing config_entry."""
+        flow = PSEGLIOptionsFlow()
+        flow._config_entry = mock_config_entry
+
+        assert flow.config_entry is mock_config_entry
 
     @patch("custom_components.psegli.config_flow.PSEGLIClient")
     async def test_options_with_new_cookie_validates_and_persists(

@@ -148,6 +148,29 @@ Validation (must pass):
 
 ## Phase 3: Reconfigure Integration for New Auth Flow
 
+### Step 3.0 - Legacy entry recovery (if credentials are missing in UI)
+
+Use this step if any of the following are true:
+- PSEG entry shows `Failed to set up` and `Configure/Reconfigure` does not show usable credential fields
+- You migrated from an older build and the entry appears partially broken
+- Logs include options-flow errors such as:
+  - `AttributeError: property 'config_entry' ... has no setter`
+
+Action:
+1. Open `Settings -> Devices & Services`.
+2. Open the `PSEG Long Island` integration card.
+3. Click menu `...` -> `Delete`.
+4. Restart Home Assistant.
+5. Add integration again:
+   - `Settings -> Devices & Services -> Add Integration -> PSEG Long Island`
+6. Enter fresh `username` and `password` during initial setup.
+7. Leave `cookie` empty first to allow add-on retrieval.
+
+Validation (must pass):
+- New entry is created successfully
+- Initial setup form includes username/password fields
+- No options-flow `config_entry` setter error appears in logs
+
 ### Step 3.1 - Reconfigure (Options flow) and force fresh cookie path
 
 Action:

@@ -24,7 +24,7 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry):
         """Create the options flow."""
-        return PSEGLIOptionsFlow(config_entry)
+        return PSEGLIOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, str] | None = None
@@ -106,10 +106,6 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class PSEGLIOptionsFlow(config_entries.OptionsFlow):
     """PSEG Long Island options flow."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, str] | None = None
