@@ -206,15 +206,16 @@ class TestAsyncSetupEntry:
     @patch("custom_components.psegli.PSEGLIClient")
     @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
     @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
-    async def test_setup_no_cookie_no_addon_returns_false(
+    async def test_setup_no_cookie_no_addon_raises_config_entry_not_ready(
         self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry_no_cookie
     ):
-        """No cookie and addon fails → returns False with notification."""
+        """No cookie and addon fails → ConfigEntryNotReady for automatic HA retry."""
+        from homeassistant.exceptions import ConfigEntryNotReady
+
         mock_fresh.return_value = None
 
-        result = await async_setup_entry(mock_hass, mock_config_entry_no_cookie)
-
-        assert result is False
+        with pytest.raises(ConfigEntryNotReady):
+            await async_setup_entry(mock_hass, mock_config_entry_no_cookie)
         # Should have sent a persistent notification
         mock_hass.services.async_call.assert_called()
 

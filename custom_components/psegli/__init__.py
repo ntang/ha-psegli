@@ -127,9 +127,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Failed to get cookies from addon: %s", e)
 
     if not cookie:
-        _LOGGER.error(
+        _LOGGER.warning(
             "No cookie available and addon failed to provide one. "
-            "Start the addon and try again, or configure a cookie manually."
+            "Will mark entry not ready so Home Assistant retries setup."
         )
         await hass.services.async_call(
             "persistent_notification",
@@ -138,13 +138,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "title": "PSEG Integration: Cookie Required",
                 "message": (
                     "No authentication cookie available. Ensure the PSEG addon "
-                    "is running, then try again. Or go to Settings > Integrations "
-                    "> PSEG Long Island > Configure to provide a cookie manually."
+                    "is running. Home Assistant will retry setup automatically. "
+                    "If retries continue failing, re-add the integration and provide "
+                    "a cookie manually during initial setup."
                 ),
                 "notification_id": "psegli_cookie_required",
             },
         )
-        return False
+        raise ConfigEntryNotReady(
+            "No authentication cookie available; addon did not provide one"
+        )
 
     # Create client and validate connection before storing
     client = PSEGLIClient(cookie)
