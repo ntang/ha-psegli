@@ -208,6 +208,22 @@ class TestAsyncSetupEntry:
     @patch("custom_components.psegli.PSEGLIClient")
     @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
     @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_setup_uses_background_task_for_scheduler(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Scheduler should use background task API so startup is not blocked."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+
+        mock_config_entry.async_create_background_task.assert_called_once()
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
     async def test_setup_no_cookie_no_addon_raises_config_entry_not_ready(
         self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry_no_cookie
     ):

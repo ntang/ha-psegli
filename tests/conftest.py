@@ -60,6 +60,9 @@ def mock_hass():
 
     # async_create_task: just schedule the coroutine and return a mock task
     hass.async_create_task = MagicMock(side_effect=lambda coro: _make_mock_task(coro))
+    hass.async_create_background_task = MagicMock(
+        side_effect=lambda coro, name, eager_start=True: _make_mock_task(coro)
+    )
 
     return hass
 
@@ -85,6 +88,9 @@ def mock_config_entry():
     }
     entry.async_on_unload = MagicMock()
     entry.add_update_listener = MagicMock(return_value=MagicMock())
+    entry.async_create_background_task = MagicMock(
+        side_effect=lambda hass, coro, name, eager_start=True: _make_mock_task(coro)
+    )
     entry.runtime_data = None
     return entry
 
@@ -101,5 +107,8 @@ def mock_config_entry_no_cookie():
     }
     entry.async_on_unload = MagicMock()
     entry.add_update_listener = MagicMock(return_value=MagicMock())
+    entry.async_create_background_task = MagicMock(
+        side_effect=lambda hass, coro, name, eager_start=True: _make_mock_task(coro)
+    )
     entry.runtime_data = None
     return entry

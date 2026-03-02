@@ -488,7 +488,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Use a flag under hass.data[DOMAIN] to prevent multiple tasks across reloads
     if not hass.data[DOMAIN].get('_scheduled_task_running'):
         hass.data[DOMAIN]['_scheduled_task_running'] = True
-        task = hass.async_create_task(refresh_cookies_scheduled())
+        task = entry.async_create_background_task(
+            hass,
+            refresh_cookies_scheduled(),
+            f"{DOMAIN}_scheduled_cookie_refresh",
+        )
         hass.data[DOMAIN]['_scheduled_task'] = task
         _LOGGER.debug("Started scheduled cookie refresh task")
     else:
