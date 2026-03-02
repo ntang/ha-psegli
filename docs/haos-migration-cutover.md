@@ -4,6 +4,15 @@
 
 Use this guide if your Home Assistant OS instance is currently running the older/broken PSEG setup and you want to move to the new architecture on `main`.
 
+UI notes:
+- Replace `<HA_HOST>` with your host (for example `homeassistant.local`).
+- Default HA URL is usually `http://<HA_HOST>:8123`.
+- Path examples in this guide can be opened directly in a browser:
+  - Backups: `http://<HA_HOST>:8123/config/backups`
+  - Automations: `http://<HA_HOST>:8123/config/automation/dashboard`
+  - Scripts: `http://<HA_HOST>:8123/config/script/dashboard`
+  - Developer Tools Actions: `http://<HA_HOST>:8123/developer-tools/action`
+
 ## What Changed (Critical)
 
 The authentication path changed from the old multi-hop flow to direct login at:
@@ -31,8 +40,11 @@ A successful cutover means all of the following are true:
 ### Step 0.1 - Create a full Home Assistant backup
 
 Action:
-- Home Assistant -> `Settings -> System -> Backups`
-- Create a full backup before changing add-ons/integrations
+1. Open `Settings -> System -> Backups` (or `http://<HA_HOST>:8123/config/backups`).
+2. Click `Create backup`.
+3. Select `Full backup`.
+4. Enter a name, for example: `pre-psegli-cutover-YYYY-MM-DD`.
+5. Click `Create`.
 
 Validation (must pass):
 - Backup appears in backup list with current timestamp
@@ -41,8 +53,22 @@ Validation (must pass):
 ### Step 0.2 - Inventory old automations/scripts using removed service
 
 Action:
-- Search automations/scripts for `psegli.enter_mfa_code`
-- Remove or disable those references now (service no longer exists)
+1. Open `Settings -> Automations & Scenes -> Automations`
+   (or `http://<HA_HOST>:8123/config/automation/dashboard`).
+2. Open each automation that might reference PSEG actions.
+3. Click the automation menu (`...`) -> `Edit in YAML`.
+4. Search within the YAML editor for:
+   - `psegli.enter_mfa_code`
+   - `service: psegli.enter_mfa_code`
+5. Remove that action or disable the automation until updated.
+6. Repeat for scripts:
+   - `Settings -> Automations & Scenes -> Scripts`
+   - or `http://<HA_HOST>:8123/config/script/dashboard`
+
+YAML-mode alternative:
+1. Open `/config/automations.yaml` and `/config/scripts.yaml`.
+2. Search for `psegli.enter_mfa_code`.
+3. Remove those calls and reload automations/scripts.
 
 Validation (must pass):
 - No active automation/script still calling `psegli.enter_mfa_code`
@@ -54,10 +80,12 @@ Validation (must pass):
 ### Step 1.1 - Ensure repository points to current project
 
 Action:
-- Home Assistant -> `Settings -> Add-ons -> Add-on Store -> ... -> Repositories`
-- Ensure this repository exists:
+1. Open `Settings -> Add-ons -> Add-on Store`.
+2. Click menu `...` (top-right) -> `Repositories`.
+3. Ensure this repository exists:
   - `https://github.com/ntang/ha-psegli`
-- Remove old/incorrect repo entries if needed
+4. Remove old/incorrect repo entries if needed.
+5. Click `Add` / `Save`, then refresh the Add-on Store view.
 
 Validation (must pass):
 - `PSEG Long Island Automation` appears in Add-on Store from this repo
@@ -65,10 +93,11 @@ Validation (must pass):
 ### Step 1.2 - Install or update the add-on
 
 Action:
-- Open `PSEG Long Island Automation`
-- Click `Install` (or `Update` if already installed)
-- Start add-on
-- Enable `Start on boot` (recommended)
+1. Open `PSEG Long Island Automation` in Add-on Store.
+2. Click `Install` (or `Update` if already installed).
+3. Open the `Info` tab and click `Start`.
+4. Toggle `Start on boot` to enabled.
+5. Open the `Log` tab and confirm startup completes.
 
 Validation (must pass):
 - Add-on state is `Running`
@@ -107,7 +136,9 @@ Validation (must pass):
 ### Step 2.2 - Restart Home Assistant
 
 Action:
-- Restart HA fully after integration update
+1. Open `Settings -> System -> Restart` (or power menu in top-right).
+2. Click `Restart Home Assistant`.
+3. Wait for UI to reconnect and dashboards to load.
 
 Validation (must pass):
 - HA restart completes normally
@@ -134,10 +165,12 @@ Validation (must pass):
 ### Step 3.2 - Confirm services are registered
 
 Action:
-- Developer Tools -> Actions
-- Confirm both services exist:
+1. Open `Developer Tools -> Actions`
+   (or `http://<HA_HOST>:8123/developer-tools/action`).
+2. In the `Action` selector, confirm both services exist:
   - `psegli.refresh_cookie`
   - `psegli.update_statistics`
+3. Confirm `psegli.enter_mfa_code` does not exist.
 
 Validation (must pass):
 - Both services are available
@@ -150,7 +183,10 @@ Validation (must pass):
 ### Step 4.1 - Force cookie refresh manually
 
 Action:
-- Call service `psegli.refresh_cookie`
+1. Open `Developer Tools -> Actions`.
+2. Select action `psegli.refresh_cookie`.
+3. Leave data empty.
+4. Click `Perform action`.
 
 Validation (must pass):
 - No service-call exception in UI/logs
@@ -159,10 +195,13 @@ Validation (must pass):
 ### Step 4.2 - Force data update manually
 
 Action:
-- Call service `psegli.update_statistics` with:
+1. Open `Developer Tools -> Actions`.
+2. Select action `psegli.update_statistics`.
+3. Enter action data:
 ```yaml
 days_back: 0
 ```
+4. Click `Perform action`.
 
 Validation (must pass):
 - Service call completes
