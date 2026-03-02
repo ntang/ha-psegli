@@ -36,6 +36,16 @@ This indicates a gap between lightweight cookie checks and actual chart-context 
 
 ---
 
+## Delivery Sequencing
+
+Preferred shipping sequence:
+1. Ship Phases 1-3 first (auth correctness + refresh hardening + observability).
+2. Ship Phase 4 next (incremental fetch + bounded auto-backfill) once new
+   signals are available.
+3. Apply Phases 5-7 tests/rollout/docs for each release boundary.
+
+---
+
 ## Phase 1 — Close the Auth Validation Gap
 
 ### 1.1 Add a data-path auth probe in `PSEGLIClient`
@@ -195,6 +205,10 @@ Current behavior fetches roughly the last 24h on every scheduled run.
 
 Implement incremental fetch planning:
 - Track `last_successful_datapoint_at` (UTC) after successful ingestion.
+- Persist/restore behavior:
+  - on startup, if in-memory `last_successful_datapoint_at` is missing,
+    derive it from latest recorder statistics timestamp when possible;
+    if unavailable, fall back to one broad recent-window fetch for that run.
 - Compute routine fetch start from:
   - `last_successful_datapoint_at - overlap`, where overlap defaults to `1h`.
 - Because upstream chart API is date-granular (`Start`/`End` date strings),
@@ -205,7 +219,8 @@ Implement incremental fetch planning:
 
 ### 4.2 Add bounded automatic backfill for larger gaps
 
-If detected gap between now and `last_successful_datapoint_at` exceeds routine window:
+If detected gap between now and `last_successful_datapoint_at` exceeds
+`24h` (`auto_backfill_trigger_hours` default), then:
 - automatically widen fetch window to cover missing period.
 - cap automatic backfill with `max_auto_backfill_days` (default `30`).
 - if required gap exceeds cap:
@@ -237,8 +252,9 @@ Add tests that reproduce real failure sequence:
 8. Incremental data window behavior:
    - fetch planning uses `last_successful_datapoint_at - 1h`.
    - duplicate/old points are skipped.
+   - startup restore fallback behavior works when in-memory state is empty.
 9. Automatic backfill behavior:
-   - gap > routine window triggers bounded backfill.
+   - gap > `auto_backfill_trigger_hours` (default `24h`) triggers bounded backfill.
    - gap > `max_auto_backfill_days` triggers operator notification.
 
 Also keep existing lifecycle/startup guarantees:
