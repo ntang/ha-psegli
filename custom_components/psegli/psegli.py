@@ -84,8 +84,15 @@ class PSEGLIClient:
             "https://mysmartenergy.psegliny.com/Dashboard",
             timeout=REQUEST_TIMEOUT,
         )
+        # 4xx = likely auth issue; 5xx = transient server error
+        if dashboard_response.status_code >= 500:
+            raise PSEGLIError(
+                f"PSEG server error (HTTP {dashboard_response.status_code})"
+            )
         if dashboard_response.status_code != 200:
-            raise InvalidAuth("Failed to get Dashboard page")
+            raise InvalidAuth(
+                f"Failed to get Dashboard page (HTTP {dashboard_response.status_code})"
+            )
 
         # Check if redirected to login page (cookie expired mid-flow)
         if "login" in dashboard_response.url.lower() or "signin" in dashboard_response.url.lower():

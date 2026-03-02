@@ -85,11 +85,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if cookies and cookies != CAPTCHA_REQUIRED:
                 cookie = cookies
                 _LOGGER.debug("Successfully obtained fresh cookies from addon")
-
-                hass.config_entries.async_update_entry(
-                    entry,
-                    data={**entry.data, CONF_COOKIE: cookie},
-                )
             elif cookies == CAPTCHA_REQUIRED:
                 _LOGGER.warning(
                     "reCAPTCHA challenge triggered during setup. "
@@ -146,7 +141,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning("Network error during setup, will retry: %s", e)
         raise ConfigEntryNotReady(f"PSEG unreachable: {e}") from e
 
-    # Store client only after successful validation
+    # Persist cookie and store client only after successful validation
+    if cookie != entry.data.get(CONF_COOKIE, ""):
+        hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_COOKIE: cookie},
+        )
     hass.data[DOMAIN][entry.entry_id] = client
 
     # Create coordinator for automatic updates (like Opower)

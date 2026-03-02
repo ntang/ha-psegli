@@ -17,6 +17,7 @@
 | 4.6 | **COMPLETE** | `08a4c24` | Self-review: broken unload, validate-before-persist, unused imports |
 | 4.7 | **COMPLETE** | `3870404` | Codex round 2: multi-entry guard, timestamps, addon URL, test-cookie, verification overhead |
 | 4.8 | **COMPLETE** | `172d956` | Proactive self-review: ~30 findings from 4 parallel review agents |
+| 4.9 | **COMPLETE** | pending | Codex R3 fixes: validate-before-persist, 5xx vs auth error |
 | 5 | Pending | — | Post-deploy |
 
 ### Phase 4.6 — Combined Self-Review + Agent Review Findings
@@ -99,6 +100,31 @@ Ran 4 parallel code review agents covering all source files. ~30 raw findings co
 - Integration `auto_login.py`: TOCTOU gap in health check + generic `Exception` handler
 - CAPTCHA sentinel string vs `LoginResult` enum mismatch
 - `strings.json` missing at component root (only `translations/en/config_flow.json` exists)
+
+### Phase 4.9 — Codex Review Round 3 + Priority Re-ranking
+
+Codex reviewed Phase 4.8 (c86ae1b) and found 2 remaining correctness issues plus confirmed the test coverage gap.
+Priority adjustments based on Codex feedback: listener stacking (#3/#10) downgraded to Low (browser is per-run),
+non-JSON handling (#4) downgraded to Low-Medium, OptionsFlow pattern (#8) and strings.json (#12) downgraded to Very Low.
+
+**High priority (fixed):**
+- 4.9.1: Cookie persisted before validation during setup — `async_update_entry` at line 89 stored addon-fetched
+  cookie before `test_connection()` at line 140. If cookie was bad, it trapped retries in auth-fail state.
+  Fix: moved `async_update_entry` to after `test_connection()` succeeds, with guard to skip no-op updates.
+- 4.9.2: `_get_dashboard_page()` classified all non-200 as `InvalidAuth` — 5xx server errors raised `InvalidAuth`
+  instead of `PSEGLIError`, permanently disabling the integration on transient PSEG outages.
+  Fix: 5xx now raises `PSEGLIError` (HA retries automatically), 4xx still raises `InvalidAuth`.
+
+**Revised backlog (stack-ranked):**
+1. Integration lifecycle tests (`__init__.py` setup/unload/services, `config_flow.py`) — biggest structural gap, high effort
+2. Addon `on_response` listener stacking — Low (browser is per-run, doesn't accumulate)
+3. Addon non-JSON login response handling — Low-Medium (timeout is graceful, but logs are opaque)
+4. CAPTCHA sentinel string vs enum mismatch — Low
+5. Integration `auto_login.py` TOCTOU + generic exception — Low
+6. OptionsFlow deprecated pattern — Very Low (unless targeting strict HA validation)
+7. Non-serializable datetime in `_parse_data` — Very Low (internal consumption only)
+8. `PSEGLIError` import path inconsistency — Very Low (cosmetic)
+9. `strings.json` missing at component root — Very Low
 
 ### Learnings & Adjustments
 
