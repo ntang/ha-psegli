@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Automated login for PSEG Long Island using the automation addon."""
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -10,12 +11,19 @@ from .const import DEFAULT_ADDON_URL
 
 logger = logging.getLogger(__name__)
 
-# Sentinel for CAPTCHA required — reCAPTCHA challenge triggered, user should retry
+# Sentinel value returned by the addon's get_cookies() when reCAPTCHA is triggered.
+# Must match the string returned by PSEGAutoLogin.get_cookies() in the addon's
+# auto_login.py (which converts LoginResult.CAPTCHA_REQUIRED to this string).
 CAPTCHA_REQUIRED = "CAPTCHA_REQUIRED"
 
 
 async def check_addon_health() -> bool:
-    """Check if the addon is available and healthy."""
+    """Check if the addon is available and healthy.
+
+    Best-effort fast-fail — callers should still handle errors from
+    subsequent addon calls (the addon could go down between the health
+    check and the actual request).
+    """
     try:
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -27,7 +35,7 @@ async def check_addon_health() -> bool:
                         return True
                 logger.debug("Addon health check failed: status=%s", resp.status)
                 return False
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         logger.debug("Addon health check failed: %s", e)
         return False
 
@@ -79,6 +87,9 @@ async def get_fresh_cookies(
                     logger.error("Addon request failed with status %s", resp.status)
                     return None
 
-    except Exception as e:
-        logger.error("Failed to get cookies from addon: %s", e)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        logger.error("Failed to connect to addon: %s", e)
+        return None
+    except Exception:
+        logger.exception("Unexpected error getting cookies from addon")
         return None

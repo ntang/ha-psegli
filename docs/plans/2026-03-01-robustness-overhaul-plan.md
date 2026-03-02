@@ -20,6 +20,7 @@
 | 4.9 | **COMPLETE** | `45c1b20` | Codex R3 fixes: validate-before-persist, 5xx vs auth error |
 | 4.10 | **COMPLETE** | `22c5a64` | Codex R4 fix: unload cleanup checks loaded entries only + lifecycle tests |
 | 4.11 | **COMPLETE** | `cceda21` | Integration lifecycle + config flow tests (27→67 tests) |
+| 4.12 | **COMPLETE** | pending | Backlog cleanup: listener leak, non-JSON logging, CAPTCHA sentinel, TOCTOU |
 | 5 | Pending | — | Post-deploy |
 
 ### Phase 4.6 — Combined Self-Review + Agent Review Findings
@@ -118,10 +119,10 @@ non-JSON handling (#4) downgraded to Low-Medium, OptionsFlow pattern (#8) and st
   Fix: 5xx now raises `PSEGLIError` (HA retries automatically), 4xx still raises `InvalidAuth`.
 
 **Revised backlog (stack-ranked):**
-1. Addon `on_response` listener stacking — Low (browser is per-run, doesn't accumulate)
-2. Addon non-JSON login response handling — Low-Medium (timeout is graceful, but logs are opaque)
-3. CAPTCHA sentinel string vs enum mismatch — Low
-4. Integration `auto_login.py` TOCTOU + generic exception — Low
+1. ~~Addon `on_response` listener stacking~~ — **FIXED in 4.12** (remove_listener in finally)
+2. ~~Addon non-JSON login response handling~~ — **FIXED in 4.12** (explicit logging for non-JSON)
+3. ~~CAPTCHA sentinel string vs enum mismatch~~ — **FIXED in 4.12** (cross-reference comments)
+4. ~~Integration `auto_login.py` TOCTOU + generic exception~~ — **FIXED in 4.12** (specific exception types, TOCTOU documented)
 5. OptionsFlow deprecated pattern — Very Low (unless targeting strict HA validation)
 6. Non-serializable datetime in `_parse_data` — Very Low (internal consumption only)
 7. `PSEGLIError` import path inconsistency — Very Low (cosmetic)

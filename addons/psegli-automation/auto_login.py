@@ -111,7 +111,11 @@ class PSEGAutoLogin:
                 try:
                     body = await response.json()
                     login_response.update(body)
-                except Exception:
+                except Exception as e:
+                    _LOGGER.warning(
+                        "Login API returned non-JSON response (status=%s): %s",
+                        response.status, e,
+                    )
                     login_response["_status"] = response.status
 
         self.page.on("response", on_response)
@@ -121,6 +125,7 @@ class PSEGAutoLogin:
             _LOGGER.info("Navigating to mysmartenergy login...")
             await self.page.goto(LOGIN_URL, wait_until="domcontentloaded")
             await asyncio.sleep(2)
+
 
             # Check if already authenticated (persistent profile session still valid)
             login_form = await self.page.query_selector("#LoginEmail")
@@ -192,6 +197,11 @@ class PSEGAutoLogin:
         except Exception as e:
             _LOGGER.error("Login error: %s", e)
             return LoginResult.FAILED, None
+        finally:
+            try:
+                self.page.remove_listener("response", on_response)
+            except Exception:
+                pass
 
     async def _extract_cookies(self) -> Optional[str]:
         """Extract MM_SID and __RequestVerificationToken from browser context."""
@@ -226,6 +236,8 @@ class PSEGAutoLogin:
             result, cookies = await self.login()
 
             if result == LoginResult.CAPTCHA_REQUIRED:
+                # String sentinel — must match CAPTCHA_REQUIRED in
+                # custom_components/psegli/auto_login.py
                 return "CAPTCHA_REQUIRED"
             if result == LoginResult.SUCCESS:
                 return cookies
