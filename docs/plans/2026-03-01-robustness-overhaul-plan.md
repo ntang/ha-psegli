@@ -19,7 +19,7 @@
 | 4.8 | **COMPLETE** | `172d956` | Proactive self-review: ~30 findings from 4 parallel review agents |
 | 4.9 | **COMPLETE** | `45c1b20` | Codex R3 fixes: validate-before-persist, 5xx vs auth error |
 | 4.10 | **COMPLETE** | `22c5a64` | Codex R4 fix: unload cleanup checks loaded entries only + lifecycle tests |
-| 4.11 | **COMPLETE** | pending | Integration lifecycle + config flow tests (25→65 tests) |
+| 4.11 | **COMPLETE** | `cceda21` | Integration lifecycle + config flow tests (27→67 tests) |
 | 5 | Pending | — | Post-deploy |
 
 ### Phase 4.6 — Combined Self-Review + Agent Review Findings
