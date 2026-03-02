@@ -50,6 +50,8 @@ Notes:
 - Manual cookie mode is possible, but you lose automated login/refresh.
 - Exact manual cookie extraction + entry steps are in [`INSTALLATION.md`](INSTALLATION.md)
   under `How To Get a Manual Cookie (Exact Steps)`.
+- Full cookie/login troubleshooting and script-assisted flows:
+  [`docs/cookie-login-playbook.md`](docs/cookie-login-playbook.md).
 
 ## Runtime Behavior
 

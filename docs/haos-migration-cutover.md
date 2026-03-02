@@ -307,6 +307,11 @@ Validation (must pass):
 - Config save succeeds
 - `psegli.update_statistics` succeeds immediately after
 
+Script-assisted alternative:
+- If browser devtools extraction is inconvenient, use the local script workflow in
+  [`docs/cookie-login-playbook.md`](docs/cookie-login-playbook.md) to generate and
+  validate a cookie string, then paste it into HA.
+
 ---
 
 ## Post-Cutover Monitoring (First 48 Hours)
@@ -352,5 +357,6 @@ If any critical validation step fails and you need immediate recovery:
 
 - Overview: `README.md`
 - Installation: `INSTALLATION.md`
+- Cookie/login playbook: `docs/cookie-login-playbook.md`
 - Auth migration background: `docs/auth-overhaul.md`
 - Full overhaul plan and commit history: `docs/plans/2026-03-01-robustness-overhaul-plan.md`

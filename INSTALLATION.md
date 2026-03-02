@@ -159,6 +159,10 @@ If `Configure`/`Options` is missing:
 - Restart Home Assistant
 - Re-add integration and provide credentials/cookie in initial add flow
 
+Script-assisted alternative:
+- See [`docs/cookie-login-playbook.md`](docs/cookie-login-playbook.md)
+  for local Playwright script commands that generate/test a cookie string.
+
 ## Runtime Refresh Behavior
 
 - Scheduled checks occur at `XX:00` and `XX:30`.
@@ -201,5 +205,6 @@ If `Configure`/`Options` is missing:
 - Root overview: [`README.md`](README.md)
 - Add-on details: [`addons/psegli-automation/README.md`](addons/psegli-automation/README.md)
 - Integration details: [`custom_components/psegli/README.md`](custom_components/psegli/README.md)
+- Cookie/login details: [`docs/cookie-login-playbook.md`](docs/cookie-login-playbook.md)
 - Overhaul plan: [`docs/plans/2026-03-01-robustness-overhaul-plan.md`](docs/plans/2026-03-01-robustness-overhaul-plan.md)
 - Auth migration notes: [`docs/auth-overhaul.md`](docs/auth-overhaul.md)
