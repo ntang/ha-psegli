@@ -270,6 +270,35 @@ All must be true:
 
 ---
 
+## Phase 7 — Documentation and Operator Guidance Updates
+
+Any behavior/system change in this plan must ship with matching documentation
+updates in the same PR/commit series.
+
+Required documentation updates:
+1. Update [`README.md`](../../README.md):
+   - explain incremental fetch behavior
+   - explain automatic backfill bounds and manual backfill fallback
+   - list any new service(s) and signal visibility behavior
+2. Update [`INSTALLATION.md`](../../INSTALLATION.md):
+   - add validation steps for new behavior after upgrade
+   - add operator steps for bounded auto-backfill and manual overflow handling
+3. Update [`docs/cookie-login-playbook.md`](../cookie-login-playbook.md):
+   - clarify auth-failure handling flow with new refresh/signal behavior
+4. Update [`docs/known-issues.md`](../known-issues.md):
+   - move resolved items out of "known issues"
+   - keep only real residual limitations/edge cases
+5. Add changelog/release notes:
+   - include user-visible behavior changes and migration notes
+   - include any new defaults/options and alerting behavior
+
+Documentation acceptance criteria:
+1. No code change in this plan merges without corresponding doc updates.
+2. Operator runbooks include explicit verification steps for new behavior.
+3. Known issues doc reflects current state after rollout (resolved vs remaining).
+
+---
+
 ## Out of Scope
 
 1. Replacing cookie auth model entirely.
@@ -297,3 +326,4 @@ covering:
 3. add-on transport retry hardening
 4. new diagnostics/notifications/signals
 5. incremental fetch window + bounded automatic backfill
+6. documentation/runbook updates aligned with final behavior
