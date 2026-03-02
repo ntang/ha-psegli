@@ -6,10 +6,21 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, CONF_COOKIE, CONF_USERNAME, CONF_PASSWORD
+from .const import (
+    DOMAIN,
+    CONF_COOKIE,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_DIAGNOSTIC_LEVEL,
+    CONF_NOTIFICATION_LEVEL,
+    DIAGNOSTIC_STANDARD,
+    DIAGNOSTIC_VERBOSE,
+    NOTIFICATION_CRITICAL_ONLY,
+    NOTIFICATION_VERBOSE,
+)
 from .psegli import PSEGLIClient, PSEGLIError
 from .exceptions import InvalidAuth
-from .auto_login import get_fresh_cookies, CAPTCHA_REQUIRED
+from .auto_login import get_fresh_cookies, CAPTCHA_REQUIRED, CATEGORY_CAPTCHA_REQUIRED
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,20 +57,23 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not cookie:
                     _LOGGER.debug("No cookie provided, attempting to get fresh cookies from addon...")
                     try:
-                        cookies = await get_fresh_cookies(username, password)
+                        login_result = await get_fresh_cookies(username, password)
 
-                        if cookies == CAPTCHA_REQUIRED:
+                        if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
                             errors["base"] = "captcha_required"
                             return self.async_show_form(
                                 step_id="user",
                                 data_schema=self._get_schema(),
                                 errors=errors,
                             )
-                        elif cookies:
-                            cookie = cookies
+                        elif login_result.cookies:
+                            cookie = login_result.cookies
                             _LOGGER.debug("Successfully obtained fresh cookies from addon")
                         else:
-                            _LOGGER.warning("Addon not available or failed to get cookies")
+                            _LOGGER.warning(
+                                "Addon failed to get cookies (category: %s)",
+                                login_result.category,
+                            )
                     except Exception as e:
                         _LOGGER.warning("Failed to get cookies from addon: %s", e)
 
@@ -119,6 +133,16 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                 password = self.config_entry.data.get(CONF_PASSWORD)
                 new_cookie = user_input.get(CONF_COOKIE, "")
 
+                # Always persist observability options
+                options_data = {
+                    CONF_DIAGNOSTIC_LEVEL: user_input.get(
+                        CONF_DIAGNOSTIC_LEVEL, DIAGNOSTIC_STANDARD
+                    ),
+                    CONF_NOTIFICATION_LEVEL: user_input.get(
+                        CONF_NOTIFICATION_LEVEL, NOTIFICATION_CRITICAL_ONLY
+                    ),
+                }
+
                 # If user provided a new cookie, validate it
                 if new_cookie:
                     client = PSEGLIClient(new_cookie)
@@ -136,23 +160,23 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                         {"notification_id": "psegli_auth_failed"},
                     )
 
-                    return self.async_create_entry(title="", data={})
+                    return self.async_create_entry(title="", data=options_data)
 
                 # If no new cookie provided, try to get one from the addon
                 elif username and password:
                     _LOGGER.debug("No new cookie provided, attempting to get fresh cookies from addon...")
                     try:
-                        cookies = await get_fresh_cookies(username, password)
+                        login_result = await get_fresh_cookies(username, password)
 
-                        if cookies == CAPTCHA_REQUIRED:
+                        if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
                             errors["base"] = "captcha_required"
-                        elif cookies:
-                            client = PSEGLIClient(cookies)
+                        elif login_result.cookies:
+                            client = PSEGLIClient(login_result.cookies)
                             await self.hass.async_add_executor_job(client.test_connection)
 
                             self.hass.config_entries.async_update_entry(
                                 self.config_entry,
-                                data={**self.config_entry.data, CONF_COOKIE: cookies},
+                                data={**self.config_entry.data, CONF_COOKIE: login_result.cookies},
                             )
 
                             await self.hass.services.async_call(
@@ -162,7 +186,7 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                             )
 
                             _LOGGER.debug("Successfully obtained and validated fresh cookies from addon")
-                            return self.async_create_entry(title="", data={})
+                            return self.async_create_entry(title="", data=options_data)
                         else:
                             errors["base"] = "addon_unavailable"
                     except Exception as e:
@@ -170,6 +194,10 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                         errors["base"] = "addon_failed"
                 else:
                     errors["base"] = "credentials_not_found"
+
+                # Even on error, persist observability options if they changed
+                if not errors:
+                    return self.async_create_entry(title="", data=options_data)
 
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
@@ -180,17 +208,37 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                 _LOGGER.exception("Unexpected exception during reconfigure")
                 errors["base"] = "unknown"
 
+        # Read current options for pre-filling the form
+        current_diag = self.config_entry.options.get(
+            CONF_DIAGNOSTIC_LEVEL, DIAGNOSTIC_STANDARD
+        )
+        current_notif = self.config_entry.options.get(
+            CONF_NOTIFICATION_LEVEL, NOTIFICATION_CRITICAL_ONLY
+        )
+
         return self.async_show_form(
             step_id="init",
-            data_schema=self._get_options_schema(),
+            data_schema=self._get_options_schema(current_diag, current_notif),
             errors=errors,
             description_placeholders={
                 "current_cookie": "Set" if self.config_entry.data.get(CONF_COOKIE) else "None"
             },
         )
 
-    def _get_options_schema(self):
+    def _get_options_schema(
+        self,
+        current_diag: str = DIAGNOSTIC_STANDARD,
+        current_notif: str = NOTIFICATION_CRITICAL_ONLY,
+    ):
         """Return the schema for the options flow."""
         return vol.Schema({
             vol.Optional(CONF_COOKIE, description="Leave empty to attempt automatic refresh via addon"): str,
+            vol.Optional(
+                CONF_DIAGNOSTIC_LEVEL,
+                default=current_diag,
+            ): vol.In([DIAGNOSTIC_STANDARD, DIAGNOSTIC_VERBOSE]),
+            vol.Optional(
+                CONF_NOTIFICATION_LEVEL,
+                default=current_notif,
+            ): vol.In([NOTIFICATION_CRITICAL_ONLY, NOTIFICATION_VERBOSE]),
         })

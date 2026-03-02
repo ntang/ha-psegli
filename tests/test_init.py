@@ -13,8 +13,30 @@ from custom_components.psegli import (
     async_update_options,
     _get_active_entry,
     get_last_cumulative_kwh,
+    _SIGNAL_LAST_AUTH_PROBE_AT,
+    _SIGNAL_LAST_AUTH_PROBE_RESULT,
+    _SIGNAL_LAST_REFRESH_ATTEMPT_AT,
+    _SIGNAL_LAST_REFRESH_REASON,
+    _SIGNAL_LAST_REFRESH_RESULT,
+    _SIGNAL_LAST_REFRESH_FAILURE_CATEGORY,
+    _SIGNAL_LAST_SUCCESSFUL_UPDATE_AT,
+    _SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT,
 )
-from custom_components.psegli.const import DOMAIN, CONF_COOKIE, CONF_USERNAME, CONF_PASSWORD
+from custom_components.psegli.auto_login import (
+    LoginResult,
+    CATEGORY_ADDON_UNREACHABLE,
+    CATEGORY_CAPTCHA_REQUIRED,
+)
+from custom_components.psegli.const import (
+    DOMAIN,
+    CONF_COOKIE,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_DIAGNOSTIC_LEVEL,
+    CONF_NOTIFICATION_LEVEL,
+    DIAGNOSTIC_VERBOSE,
+    NOTIFICATION_VERBOSE,
+)
 from custom_components.psegli.exceptions import InvalidAuth, PSEGLIError
 
 
@@ -108,7 +130,7 @@ class TestAsyncSetupEntry:
         self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry_no_cookie
     ):
         """When no cookie is stored, setup fetches from addon."""
-        mock_fresh.return_value = "MM_SID=fresh_addon_cookie"
+        mock_fresh.return_value = LoginResult(cookies="MM_SID=fresh_addon_cookie")
         mock_client = MagicMock()
         mock_client.test_connection = MagicMock(return_value=True)
         mock_client.cookie = "MM_SID=fresh_addon_cookie"
@@ -130,7 +152,7 @@ class TestAsyncSetupEntry:
         self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry_no_cookie
     ):
         """Phase 4.9 regression test: addon cookie must not be persisted before test_connection."""
-        mock_fresh.return_value = "MM_SID=bad_addon_cookie"
+        mock_fresh.return_value = LoginResult(cookies="MM_SID=bad_addon_cookie")
         mock_client = MagicMock()
         mock_client.test_connection = MagicMock(side_effect=InvalidAuth("rejected"))
         mock_client_cls.return_value = mock_client
@@ -274,7 +296,7 @@ class TestAsyncSetupEntry:
         async def _slow_refresh(*_args, **_kwargs):
             started.set()
             await release.wait()
-            return "MM_SID=new_cookie; __RequestVerificationToken=new_token"
+            return LoginResult(cookies="MM_SID=new_cookie; __RequestVerificationToken=new_token")
 
         mock_fresh.side_effect = _slow_refresh
 
@@ -341,7 +363,7 @@ class TestAsyncSetupEntry:
         """No cookie and addon fails → ConfigEntryNotReady for automatic HA retry."""
         from homeassistant.exceptions import ConfigEntryNotReady
 
-        mock_fresh.return_value = None
+        mock_fresh.return_value = LoginResult(category="addon_disconnect")
 
         with pytest.raises(ConfigEntryNotReady):
             await async_setup_entry(mock_hass, mock_config_entry_no_cookie)
@@ -665,3 +687,170 @@ class TestAsyncUpdateOptions:
         await async_update_options(mock_hass, mock_config_entry)
 
         assert mock_hass.data[DOMAIN]["_consecutive_auth_failures"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.2/3.3: Signal tracking, get_status, observability
+# ---------------------------------------------------------------------------
+
+class TestSignalTracking:
+    """Tests for Phase 3.3 signal model."""
+
+    @patch("custom_components.psegli._process_chart_data", new_callable=AsyncMock)
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_successful_update_records_last_successful_update_at(
+        self, mock_health, mock_fresh, mock_client_cls, mock_process, mock_hass, mock_config_entry
+    ):
+        """Successful statistics update records last_successful_update_at signal."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client.get_usage_data = MagicMock(return_value={"chart_data": {}})
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "update_statistics")
+        await handler(MagicMock(data={"days_back": 0}))
+
+        assert _SIGNAL_LAST_SUCCESSFUL_UPDATE_AT in mock_hass.data[DOMAIN]
+        assert isinstance(
+            mock_hass.data[DOMAIN][_SIGNAL_LAST_SUCCESSFUL_UPDATE_AT], datetime
+        )
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock, return_value=False)
+    async def test_refresh_failure_records_signals(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Failed refresh records failure signals including category."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
+        assert mock_hass.data[DOMAIN][_SIGNAL_LAST_REFRESH_RESULT] == "failed"
+        assert (
+            mock_hass.data[DOMAIN][_SIGNAL_LAST_REFRESH_FAILURE_CATEGORY]
+            == CATEGORY_ADDON_UNREACHABLE
+        )
+        assert mock_hass.data[DOMAIN][_SIGNAL_LAST_REFRESH_REASON] == "manual_service"
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_get_status_service_registered(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """get_status service is registered during setup."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+
+        registered = [
+            call[0][1]
+            for call in mock_hass.services.async_register.call_args_list
+        ]
+        assert "get_status" in registered
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_get_status_returns_all_signal_keys(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """get_status handler returns all expected signal fields."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+
+        # Extract the get_status handler
+        handler = _get_registered_service_handler(mock_hass, "get_status")
+        result = await handler(MagicMock(data={}))
+
+        expected_keys = {
+            "last_auth_probe_at",
+            "last_auth_probe_result",
+            "last_refresh_attempt_at",
+            "last_refresh_reason",
+            "last_refresh_result",
+            "last_refresh_failure_category",
+            "consecutive_auth_failures",
+            "last_successful_update_at",
+            "last_successful_datapoint_at",
+            "cookie_age_seconds",
+        }
+        assert set(result.keys()) == expected_keys
+        # Cookie age should be computed since we recorded it during setup
+        assert result["cookie_age_seconds"] is not None
+        assert result["consecutive_auth_failures"] == 0
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_refresh_logs_contain_attempt_id(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry, caplog
+    ):
+        """Refresh log messages include the [refresh:XXXXXXXX] attempt ID."""
+        mock_health.return_value = False
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+
+        import logging
+        with caplog.at_level(logging.INFO):
+            await handler(MagicMock(data={}))
+
+        refresh_logs = [r for r in caplog.records if "[refresh:" in r.message]
+        assert len(refresh_logs) >= 1
+        # Verify the attempt ID format: [refresh:XXXXXXXX]
+        import re
+        for record in refresh_logs:
+            assert re.search(r"\[refresh:[0-9a-f]{8}\]", record.message)
+
+
+class TestProcessChartDataSignals:
+    """Tests for _process_chart_data signal tracking."""
+
+    @patch("custom_components.psegli.get_last_cumulative_kwh", new_callable=AsyncMock)
+    @patch("custom_components.psegli.async_add_external_statistics", new_callable=AsyncMock)
+    async def test_records_last_successful_datapoint_at(
+        self, mock_add_stats, mock_get_last_cumulative, mock_hass
+    ):
+        """_process_chart_data records max timestamp as last_successful_datapoint_at."""
+        mock_get_last_cumulative.return_value = 0.0
+        mock_hass.data.setdefault(DOMAIN, {})
+
+        chart_data = {
+            "Off-Peak Usage": {
+                "valid_points": [
+                    {"timestamp": datetime(2026, 3, 1, 5, 0, tzinfo=timezone.utc), "value": 1.0},
+                    {"timestamp": datetime(2026, 3, 1, 6, 0, tzinfo=timezone.utc), "value": 2.0},
+                ]
+            }
+        }
+
+        await _process_chart_data(mock_hass, chart_data)
+
+        assert _SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT in mock_hass.data[DOMAIN]
+        recorded_at = mock_hass.data[DOMAIN][_SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT]
+        assert recorded_at == datetime(2026, 3, 1, 6, 0, tzinfo=timezone.utc)

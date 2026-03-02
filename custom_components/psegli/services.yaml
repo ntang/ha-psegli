@@ -17,3 +17,8 @@ refresh_cookie:
   name: "Refresh PSEG Cookie"
   description: "Manually refresh the PSEG authentication cookie using the addon"
   fields: {}
+
+get_status:
+  name: "Get PSEG Status"
+  description: "Returns current integration status signals for dashboards and debugging"
+  fields: {}

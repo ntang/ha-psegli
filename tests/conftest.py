@@ -86,6 +86,7 @@ def mock_config_entry():
         CONF_PASSWORD: "password123",
         CONF_COOKIE: "MM_SID=valid_test_cookie",
     }
+    entry.options = {}
     entry.async_on_unload = MagicMock()
     entry.add_update_listener = MagicMock(return_value=MagicMock())
     entry.async_create_background_task = MagicMock(
@@ -105,6 +106,7 @@ def mock_config_entry_no_cookie():
         CONF_PASSWORD: "password123",
         CONF_COOKIE: "",
     }
+    entry.options = {}
     entry.async_on_unload = MagicMock()
     entry.add_update_listener = MagicMock(return_value=MagicMock())
     entry.async_create_background_task = MagicMock(

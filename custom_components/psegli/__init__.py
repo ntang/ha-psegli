@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -17,11 +18,37 @@ from homeassistant.components.recorder.models import StatisticMetaData
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+
+try:
+    from homeassistant.core import SupportsResponse
+    _SUPPORTS_RESPONSE_ONLY = SupportsResponse.ONLY
+except ImportError:  # pragma: no cover - older HA versions
+    _SUPPORTS_RESPONSE_ONLY = None
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN, CONF_USERNAME, CONF_PASSWORD, CONF_COOKIE
+from .const import (
+    DOMAIN,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_COOKIE,
+    CONF_DIAGNOSTIC_LEVEL,
+    CONF_NOTIFICATION_LEVEL,
+    DIAGNOSTIC_STANDARD,
+    DIAGNOSTIC_VERBOSE,
+    NOTIFICATION_CRITICAL_ONLY,
+    NOTIFICATION_VERBOSE,
+)
 from .psegli import InvalidAuth, PSEGLIClient, PSEGLIError
-from .auto_login import get_fresh_cookies, check_addon_health, CAPTCHA_REQUIRED
+from .auto_login import (
+    get_fresh_cookies,
+    check_addon_health,
+    CAPTCHA_REQUIRED,
+    LoginResult,
+    CATEGORY_CAPTCHA_REQUIRED,
+    CATEGORY_ADDON_DISCONNECT,
+    CATEGORY_ADDON_UNREACHABLE,
+    CATEGORY_UNKNOWN_ERROR,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +62,16 @@ _PENDING_AUTH_REFRESH_TASK = "_pending_auth_refresh_task"
 _AUTH_FAILURE_THRESHOLD = 3
 _AUTH_FAILURE_REFRESH_DELAY_SECONDS = 10
 _AUTH_FAILURE_NOTIFICATION_COOLDOWN = timedelta(hours=24)
+
+# Signal tracking keys (Phase 3.3)
+_SIGNAL_LAST_AUTH_PROBE_AT = "_last_auth_probe_at"
+_SIGNAL_LAST_AUTH_PROBE_RESULT = "_last_auth_probe_result"
+_SIGNAL_LAST_REFRESH_ATTEMPT_AT = "_last_refresh_attempt_at"
+_SIGNAL_LAST_REFRESH_REASON = "_last_refresh_reason"
+_SIGNAL_LAST_REFRESH_RESULT = "_last_refresh_result"
+_SIGNAL_LAST_REFRESH_FAILURE_CATEGORY = "_last_refresh_failure_category"
+_SIGNAL_LAST_SUCCESSFUL_UPDATE_AT = "_last_successful_update_at"
+_SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT = "_last_successful_datapoint_at"
 
 # Home Assistant statistics metadata changed over time. Newer versions require
 # explicit fields like mean_type/unit_class; older versions do not define them.
@@ -125,12 +162,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not cookie:
         _LOGGER.debug("No cookie available, attempting to get fresh cookies from addon...")
         try:
-            cookies = await get_fresh_cookies(username, password)
+            login_result = await get_fresh_cookies(username, password)
 
-            if cookies and cookies != CAPTCHA_REQUIRED:
-                cookie = cookies
+            if login_result.cookies:
+                cookie = login_result.cookies
                 _LOGGER.debug("Successfully obtained fresh cookies from addon")
-            elif cookies == CAPTCHA_REQUIRED:
+            elif login_result.category == CATEGORY_CAPTCHA_REQUIRED:
                 _LOGGER.warning(
                     "reCAPTCHA challenge triggered during setup. "
                     "Try reloading the integration — it usually passes on retry."
@@ -149,7 +186,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     },
                 )
             else:
-                _LOGGER.warning("Addon not available or failed to get cookies")
+                _LOGGER.warning(
+                    "Addon failed to get cookies (category: %s)",
+                    login_result.category,
+                )
         except Exception as e:
             _LOGGER.warning("Failed to get cookies from addon: %s", e)
 
@@ -252,29 +292,80 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         return count
 
+    def _log_verbose(msg: str, *args: Any) -> None:
+        """Log at INFO level only when diagnostic_level is verbose."""
+        active = _get_active_entry(hass)
+        if active and active.options.get(CONF_DIAGNOSTIC_LEVEL) == DIAGNOSTIC_VERBOSE:
+            _LOGGER.info(msg, *args)
+
+    def _should_notify_verbose() -> bool:
+        """Return True when notification_level is verbose."""
+        active = _get_active_entry(hass)
+        return bool(
+            active
+            and active.options.get(CONF_NOTIFICATION_LEVEL) == NOTIFICATION_VERBOSE
+        )
+
+    def _record_signal(key: str, value: Any) -> None:
+        """Store a signal value in domain_data."""
+        domain_data[key] = value
+
     async def _refresh_cookie_once(
         trigger_reason: str,
         notify_on_success: bool,
         notify_on_failure: bool,
     ) -> bool:
         """Run one cookie refresh attempt and optional follow-up update."""
+        attempt_id = uuid.uuid4().hex[:8]
+        now = datetime.now(tz=timezone.utc)
+        _record_signal(_SIGNAL_LAST_REFRESH_ATTEMPT_AT, now)
+        _record_signal(_SIGNAL_LAST_REFRESH_REASON, trigger_reason)
+
+        _LOGGER.info(
+            "[refresh:%s] Starting cookie refresh (reason: %s)",
+            attempt_id, trigger_reason,
+        )
+
         active_entry = _get_active_entry(hass)
         if active_entry is None:
+            _record_signal(_SIGNAL_LAST_REFRESH_RESULT, "failed")
+            _record_signal(_SIGNAL_LAST_REFRESH_FAILURE_CATEGORY, None)
             return False
 
         username = active_entry.data.get(CONF_USERNAME)
         password = active_entry.data.get(CONF_PASSWORD)
         if not username or not password:
-            _LOGGER.error("No credentials available for cookie refresh (%s)", trigger_reason)
+            _LOGGER.error(
+                "[refresh:%s] No credentials available (%s)",
+                attempt_id, trigger_reason,
+            )
+            _record_signal(_SIGNAL_LAST_REFRESH_RESULT, "failed")
+            _record_signal(_SIGNAL_LAST_REFRESH_FAILURE_CATEGORY, None)
             return False
 
         if not await check_addon_health():
-            _LOGGER.warning("Addon not available or unhealthy (%s)", trigger_reason)
+            _LOGGER.warning(
+                "[refresh:%s] Addon not available or unhealthy (%s)",
+                attempt_id, trigger_reason,
+            )
+            _record_signal(_SIGNAL_LAST_REFRESH_RESULT, "failed")
+            _record_signal(
+                _SIGNAL_LAST_REFRESH_FAILURE_CATEGORY,
+                CATEGORY_ADDON_UNREACHABLE,
+            )
             return False
 
-        cookies = await get_fresh_cookies(username, password)
-        if cookies == CAPTCHA_REQUIRED:
-            _LOGGER.warning("reCAPTCHA challenge triggered (%s)", trigger_reason)
+        login_result = await get_fresh_cookies(username, password)
+        if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
+            _LOGGER.warning(
+                "[refresh:%s] reCAPTCHA challenge triggered (%s)",
+                attempt_id, trigger_reason,
+            )
+            _record_signal(_SIGNAL_LAST_REFRESH_RESULT, "failed")
+            _record_signal(
+                _SIGNAL_LAST_REFRESH_FAILURE_CATEGORY,
+                CATEGORY_CAPTCHA_REQUIRED,
+            )
             await hass.services.async_call(
                 "persistent_notification",
                 "create",
@@ -289,16 +380,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             return False
 
-        if not cookies:
-            _LOGGER.warning("Addon failed to provide fresh cookies (%s)", trigger_reason)
-            if notify_on_failure:
+        if not login_result.cookies:
+            _LOGGER.warning(
+                "[refresh:%s] Addon failed to provide fresh cookies (%s, category: %s)",
+                attempt_id, trigger_reason, login_result.category,
+            )
+            _record_signal(_SIGNAL_LAST_REFRESH_RESULT, "failed")
+            _record_signal(
+                _SIGNAL_LAST_REFRESH_FAILURE_CATEGORY,
+                login_result.category,
+            )
+            if notify_on_failure or _should_notify_verbose():
                 await hass.services.async_call(
                     "persistent_notification",
                     "create",
                     {
                         "title": "PSEG Integration: Cookie Refresh Failed",
                         "message": (
-                            "Failed to refresh your PSEG authentication cookie. "
+                            "Failed to refresh your PSEG authentication cookie "
+                            f"(reason: {login_result.category}). "
                             "Please check addon status or provide a cookie manually."
                         ),
                         "notification_id": "psegli_cookie_refresh_failed",
@@ -306,6 +406,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             return False
 
+        cookies = login_result.cookies
         current_client = hass.data[DOMAIN][active_entry.entry_id]
 
         # Validate BEFORE persisting — rollback on failure
@@ -316,7 +417,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:
             current_client.update_cookie(old_cookie)
             raise
-        _LOGGER.debug("New cookie validation successful (%s)", trigger_reason)
+        _log_verbose(
+            "[refresh:%s] New cookie validation successful (%s)",
+            attempt_id, trigger_reason,
+        )
 
         if hasattr(active_entry, "runtime_data") and active_entry.runtime_data:
             coord = active_entry.runtime_data
@@ -330,7 +434,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         _record_cookie_obtained(hass)
         _reset_auth_failure_counter("cookie refresh success")
-        _LOGGER.info("Successfully refreshed cookie (%s)", trigger_reason)
+        _record_signal(_SIGNAL_LAST_REFRESH_RESULT, "success")
+        _record_signal(_SIGNAL_LAST_REFRESH_FAILURE_CATEGORY, None)
+        _LOGGER.info(
+            "[refresh:%s] Successfully refreshed cookie (%s)",
+            attempt_id, trigger_reason,
+        )
 
         # Fetch and save energy data with the new cookie.
         try:
@@ -341,12 +450,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         except Exception as stats_err:
             _LOGGER.warning(
-                "Statistics update after refresh failed (%s): %s",
-                trigger_reason,
-                stats_err,
+                "[refresh:%s] Statistics update after refresh failed (%s): %s",
+                attempt_id, trigger_reason, stats_err,
             )
 
-        if notify_on_success:
+        if notify_on_success or _should_notify_verbose():
             await hass.services.async_call(
                 "persistent_notification",
                 "create",
@@ -459,6 +567,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await _process_chart_data(hass_ref, historical_data["chart_data"])
                 _LOGGER.info("Statistics update completed successfully")
                 _reset_auth_failure_counter("successful statistics update")
+                _record_signal(
+                    _SIGNAL_LAST_SUCCESSFUL_UPDATE_AT,
+                    datetime.now(tz=timezone.utc),
+                )
                 return True
             else:
                 _LOGGER.warning("No chart data found in response")
@@ -510,6 +622,60 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             async_refresh_cookie
         )
 
+    # Register the get_status service (Phase 3.3)
+    async def async_get_status(call: Any) -> dict[str, Any]:
+        """Return current integration status signals."""
+        def _iso(dt: datetime | None) -> str | None:
+            return dt.isoformat() if dt else None
+
+        obtained_at = domain_data.get(_COOKIE_OBTAINED_AT)
+        cookie_age = None
+        if obtained_at:
+            cookie_age = int(
+                (datetime.now(tz=timezone.utc) - obtained_at).total_seconds()
+            )
+        return {
+            "last_auth_probe_at": _iso(
+                domain_data.get(_SIGNAL_LAST_AUTH_PROBE_AT)
+            ),
+            "last_auth_probe_result": domain_data.get(
+                _SIGNAL_LAST_AUTH_PROBE_RESULT
+            ),
+            "last_refresh_attempt_at": _iso(
+                domain_data.get(_SIGNAL_LAST_REFRESH_ATTEMPT_AT)
+            ),
+            "last_refresh_reason": domain_data.get(
+                _SIGNAL_LAST_REFRESH_REASON
+            ),
+            "last_refresh_result": domain_data.get(
+                _SIGNAL_LAST_REFRESH_RESULT
+            ),
+            "last_refresh_failure_category": domain_data.get(
+                _SIGNAL_LAST_REFRESH_FAILURE_CATEGORY
+            ),
+            "consecutive_auth_failures": domain_data.get(
+                _AUTH_FAILURE_COUNT, 0
+            ),
+            "last_successful_update_at": _iso(
+                domain_data.get(_SIGNAL_LAST_SUCCESSFUL_UPDATE_AT)
+            ),
+            "last_successful_datapoint_at": _iso(
+                domain_data.get(_SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT)
+            ),
+            "cookie_age_seconds": cookie_age,
+        }
+
+    if not hass.services.has_service(DOMAIN, "get_status"):
+        register_kwargs: dict[str, Any] = {}
+        if _SUPPORTS_RESPONSE_ONLY is not None:
+            register_kwargs["supports_response"] = _SUPPORTS_RESPONSE_ONLY
+        hass.services.async_register(
+            DOMAIN,
+            "get_status",
+            async_get_status,
+            **register_kwargs,
+        )
+
     # Set up scheduled cookie refresh at XX:00 and XX:30
     async def async_scheduled_cookie_refresh() -> None:
         """Automatically refresh cookies at scheduled times.
@@ -533,20 +699,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # If we have a cookie, test it first — skip refresh if still valid
             if cookie and active_entry.entry_id in hass.data.get(DOMAIN, {}):
                 current_client = hass.data[DOMAIN][active_entry.entry_id]
+                _record_signal(
+                    _SIGNAL_LAST_AUTH_PROBE_AT,
+                    datetime.now(tz=timezone.utc),
+                )
                 try:
                     await hass.async_add_executor_job(current_client.test_data_path)
+                    _record_signal(_SIGNAL_LAST_AUTH_PROBE_RESULT, "ok")
                     _log_cookie_age(hass, "scheduled check (still valid)")
                     # Still update statistics — energy data may have new readings
                     try:
                         await _do_update_statistics(hass, days_back=0)
-                        _LOGGER.debug("Statistics updated (cookie still valid)")
+                        _log_verbose("Statistics updated (cookie still valid)")
                     except Exception as stats_err:
                         _LOGGER.warning("Statistics update failed: %s", stats_err)
                     return
                 except InvalidAuth:
+                    _record_signal(_SIGNAL_LAST_AUTH_PROBE_RESULT, "invalid_auth")
                     _log_cookie_age(hass, "cookie expired")
-                    _LOGGER.debug("Cookie expired, proceeding with refresh")
+                    _LOGGER.info("Cookie expired, proceeding with refresh")
                 except PSEGLIError:
+                    _record_signal(_SIGNAL_LAST_AUTH_PROBE_RESULT, "transient_error")
                     _LOGGER.warning("Network error during cookie check, will attempt refresh")
 
             await _refresh_cookie_shared(
@@ -619,6 +792,7 @@ class PSEGCoordinator(DataUpdateCoordinator):
 async def _process_chart_data(hass: HomeAssistant, chart_data: dict[str, Any]) -> None:
     """Process chart data and update statistics."""
     local_tz = pytz.timezone('America/New_York')
+    max_datapoint_at: datetime | None = None
 
     for series_name, series_data in chart_data.items():
         try:
@@ -722,6 +896,10 @@ async def _process_chart_data(hass: HomeAssistant, chart_data: dict[str, Any]) -
                                 "sum": cumulative_kwh,      # Cumulative total
                             })
 
+                            # Track max datapoint timestamp for signals
+                            if max_datapoint_at is None or start_time > max_datapoint_at:
+                                max_datapoint_at = start_time
+
                             # Update cumulative_offset for the next point
                             cumulative_offset = cumulative_kwh
 
@@ -787,6 +965,12 @@ async def _process_chart_data(hass: HomeAssistant, chart_data: dict[str, Any]) -
         except Exception as e:
             _LOGGER.error("Error processing series %s: %s", series_name, e)
             continue
+
+    # Record the most recent datapoint timestamp for observability
+    if max_datapoint_at is not None:
+        hass.data.setdefault(DOMAIN, {})[_SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT] = (
+            max_datapoint_at
+        )
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -876,5 +1060,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not remaining_loaded_entries:
         hass.services.async_remove(DOMAIN, "update_statistics")
         hass.services.async_remove(DOMAIN, "refresh_cookie")
+        hass.services.async_remove(DOMAIN, "get_status")
 
     return True

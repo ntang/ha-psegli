@@ -4,8 +4,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.psegli.auto_login import (
+    LoginResult,
+    CATEGORY_CAPTCHA_REQUIRED,
+    CATEGORY_ADDON_DISCONNECT,
+)
 from custom_components.psegli.config_flow import PSEGLIConfigFlow, PSEGLIOptionsFlow
-from custom_components.psegli.const import DOMAIN, CONF_USERNAME, CONF_PASSWORD, CONF_COOKIE
+from custom_components.psegli.const import (
+    DOMAIN,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_COOKIE,
+    CONF_DIAGNOSTIC_LEVEL,
+    CONF_NOTIFICATION_LEVEL,
+    DIAGNOSTIC_STANDARD,
+    NOTIFICATION_CRITICAL_ONLY,
+)
 from custom_components.psegli.exceptions import InvalidAuth, PSEGLIError
 
 
@@ -106,7 +120,7 @@ class TestPSEGLIConfigFlow:
     @patch("custom_components.psegli.config_flow.get_fresh_cookies", new_callable=AsyncMock)
     async def test_user_step_captcha_shows_error(self, mock_fresh, mock_hass):
         """CAPTCHA from addon shows captcha_required error."""
-        mock_fresh.return_value = "CAPTCHA_REQUIRED"
+        mock_fresh.return_value = LoginResult(category=CATEGORY_CAPTCHA_REQUIRED)
 
         flow = _make_config_flow(mock_hass)
         result = await flow.async_step_user({
@@ -123,7 +137,7 @@ class TestPSEGLIConfigFlow:
         self, mock_fresh, mock_client_cls, mock_hass
     ):
         """No cookie submitted, addon provides one → entry created."""
-        mock_fresh.return_value = "MM_SID=addon_cookie"
+        mock_fresh.return_value = LoginResult(cookies="MM_SID=addon_cookie")
         mock_client = MagicMock()
         mock_client.test_connection = MagicMock(return_value=True)
         mock_client_cls.return_value = mock_client
@@ -142,7 +156,7 @@ class TestPSEGLIConfigFlow:
         self, mock_fresh, mock_hass
     ):
         """No cookie and addon fails → entry created with empty cookie (setup will handle)."""
-        mock_fresh.return_value = None
+        mock_fresh.return_value = LoginResult(category=CATEGORY_ADDON_DISCONNECT)
 
         flow = _make_config_flow(mock_hass)
         result = await flow.async_step_user({
@@ -240,7 +254,7 @@ class TestPSEGLIOptionsFlow:
         self, mock_client_cls, mock_fresh, mock_hass, mock_config_entry
     ):
         """Empty cookie in options triggers addon fetch."""
-        mock_fresh.return_value = "MM_SID=addon_refreshed"
+        mock_fresh.return_value = LoginResult(cookies="MM_SID=addon_refreshed")
         mock_client = MagicMock()
         mock_client.test_connection = MagicMock(return_value=True)
         mock_client_cls.return_value = mock_client
@@ -256,7 +270,7 @@ class TestPSEGLIOptionsFlow:
         self, mock_fresh, mock_hass, mock_config_entry
     ):
         """CAPTCHA during options addon fetch shows error."""
-        mock_fresh.return_value = "CAPTCHA_REQUIRED"
+        mock_fresh.return_value = LoginResult(category=CATEGORY_CAPTCHA_REQUIRED)
 
         flow = _make_options_flow(mock_hass, mock_config_entry)
         result = await flow.async_step_init({CONF_COOKIE: ""})
@@ -282,3 +296,52 @@ class TestPSEGLIOptionsFlow:
 
         assert result["type"] == "form"
         assert result["step_id"] == "init"
+
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_options_persists_observability_options(
+        self, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Observability options (diagnostic_level, notification_level) are persisted."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client_cls.return_value = mock_client
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init({
+            CONF_COOKIE: "MM_SID=new",
+            CONF_DIAGNOSTIC_LEVEL: "verbose",
+            CONF_NOTIFICATION_LEVEL: "verbose",
+        })
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_DIAGNOSTIC_LEVEL] == "verbose"
+        assert result["data"][CONF_NOTIFICATION_LEVEL] == "verbose"
+
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_options_defaults_observability_when_not_provided(
+        self, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Observability options default to standard/critical_only when not submitted."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client_cls.return_value = mock_client
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init({
+            CONF_COOKIE: "MM_SID=new",
+        })
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_DIAGNOSTIC_LEVEL] == DIAGNOSTIC_STANDARD
+        assert result["data"][CONF_NOTIFICATION_LEVEL] == NOTIFICATION_CRITICAL_ONLY
+
+    async def test_options_schema_includes_observability_fields(self, mock_hass, mock_config_entry):
+        """Options schema includes diagnostic_level and notification_level."""
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init(None)
+
+        # The form should have been shown with the schema
+        schema = result["data_schema"]
+        schema_keys = [str(k) for k in schema.schema]
+        assert CONF_DIAGNOSTIC_LEVEL in schema_keys
+        assert CONF_NOTIFICATION_LEVEL in schema_keys

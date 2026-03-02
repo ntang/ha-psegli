@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import random
+from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
@@ -16,6 +17,21 @@ logger = logging.getLogger(__name__)
 # Must match the string returned by PSEGAutoLogin.get_cookies() in the addon's
 # auto_login.py (which converts LoginResult.CAPTCHA_REQUIRED to this string).
 CAPTCHA_REQUIRED = "CAPTCHA_REQUIRED"
+
+# Failure categories for diagnostics (Phase 3.2).
+CATEGORY_ADDON_UNREACHABLE = "addon_unreachable"
+CATEGORY_ADDON_DISCONNECT = "addon_disconnect"
+CATEGORY_CAPTCHA_REQUIRED = "captcha_required"
+CATEGORY_INVALID_CREDENTIALS = "invalid_credentials"
+CATEGORY_UNKNOWN_ERROR = "unknown_runtime_error"
+
+
+@dataclass
+class LoginResult:
+    """Result from get_fresh_cookies with failure classification."""
+
+    cookies: Optional[str] = None
+    category: Optional[str] = None  # one of CATEGORY_* constants on failure
 
 # Retry configuration for transport failures (connection error, timeout, disconnect).
 # Terminal responses (captcha_required, invalid credentials) are never retried.
@@ -50,12 +66,11 @@ async def check_addon_health() -> bool:
 async def _attempt_login(
     session: aiohttp.ClientSession,
     login_data: dict,
-) -> Optional[str]:
+) -> LoginResult:
     """Single login attempt against the addon /login endpoint.
 
     Returns:
-        Cookie string on success, CAPTCHA_REQUIRED sentinel, or None on
-        functional failure (invalid credentials, 4xx, unknown addon error).
+        LoginResult with cookies on success, or a failure category.
 
     Raises:
         aiohttp.ClientError or asyncio.TimeoutError on transport failures
@@ -69,17 +84,17 @@ async def _attempt_login(
             result = await resp.json()
             if result.get("success") and result.get("cookies"):
                 logger.debug("Successfully obtained cookies from addon")
-                return result["cookies"]
+                return LoginResult(cookies=result["cookies"])
             if result.get("captcha_required"):
                 logger.info(
                     "reCAPTCHA challenge triggered — retry usually resolves it"
                 )
-                return CAPTCHA_REQUIRED
+                return LoginResult(category=CATEGORY_CAPTCHA_REQUIRED)
             logger.error(
                 "Addon login failed: %s",
                 result.get("error", "Unknown error"),
             )
-            return None
+            return LoginResult(category=CATEGORY_INVALID_CREDENTIALS)
         elif resp.status >= 500:
             # Server errors are transient — raise so the retry loop catches it.
             raise aiohttp.ClientResponseError(
@@ -91,13 +106,13 @@ async def _attempt_login(
         else:
             # 4xx and other client errors are terminal
             logger.error("Addon request failed with status %s", resp.status)
-            return None
+            return LoginResult(category=CATEGORY_UNKNOWN_ERROR)
 
 
 async def get_fresh_cookies(
     username: str,
     password: str,
-) -> Optional[str]:
+) -> LoginResult:
     """Get fresh cookies using the automation addon.
 
     Transport failures (connection error, timeout, server disconnected, 5xx)
@@ -111,8 +126,7 @@ async def get_fresh_cookies(
     transient /health failures don't bypass the retry loop.
 
     Returns:
-        Cookie string on success, CAPTCHA_REQUIRED when reCAPTCHA challenge
-        is triggered (retry usually resolves it), or None on failure.
+        LoginResult with cookies on success, or a failure category.
     """
     logger.debug("Requesting fresh cookies from PSEG automation addon...")
 
@@ -148,8 +162,8 @@ async def get_fresh_cookies(
 
         except Exception:
             logger.exception("Unexpected error getting cookies from addon")
-            return None
+            return LoginResult(category=CATEGORY_UNKNOWN_ERROR)
 
     # All retries exhausted due to transport failures
     logger.error("Failed to connect to addon after %d attempts: %s", _MAX_LOGIN_RETRIES, last_transport_error)
-    return None
+    return LoginResult(category=CATEGORY_ADDON_DISCONNECT)
