@@ -22,7 +22,7 @@ HEADED = os.environ.get("HEADED", "").lower() in ("1", "true", "yes")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PSEG Long Island Automation", version="2.5.0")
+app = FastAPI(title="PSEG Long Island Automation", version="2.5.0.1")
 
 # Prevent concurrent login attempts (Playwright can only run one at a time)
 _login_lock = asyncio.Lock()
