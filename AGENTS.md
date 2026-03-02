@@ -12,8 +12,9 @@ PSEG Long Island energy usage integration for Home Assistant. Two components:
 ## Commands
 
 ```bash
-python -m pytest -q                     # run full test suite from repo root
-python -m pytest -q tests/test_init.py  # run a single test file
+# Test environment: from repo root: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q                     # run full test suite from repo root
+.venv/bin/python -m pytest -q tests/test_init.py   # run a single test file
 cd addons/psegli-automation && HEADED=1 python run.py  # add-on with visible browser
 docker build -t psegli-automation addons/psegli-automation/
 ```

@@ -105,7 +105,20 @@ The robustness-overhaul branch work now merged to `main` includes test coverage 
 - config flow and options flow
 - PSEG client error handling
 
+**Set up a test environment** (from repo root):
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+```
+
 Run tests locally:
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+Or with system/other Python if dependencies are already installed:
 
 ```bash
 python -m pytest -q
