@@ -24,9 +24,9 @@ Key operational changes:
 - Add-on performs automated login/refresh attempts
 - Scheduled cookie validity checks run at `XX:00` and `XX:30`
 
-## Upgrade Note (Legacy Broken Entry -> v2.5.0.4)
+## Upgrade Note (Legacy Broken Entry -> v2.5.0.5)
 
-If you are upgrading from an older broken install, update to at least `v2.5.0.4` before troubleshooting auth.
+If you are upgrading from an older broken install, update to at least `v2.5.0.5` before troubleshooting auth.
 
 Why this matters:
 - Older builds can leave a legacy config entry that fails when opening Configure/Reconfigure.
@@ -37,7 +37,7 @@ Why this matters:
   - Configure/Reconfigure does not present usable `username` / `password` flow
 
 Required recovery sequence:
-1. Update add-on + integration to `v2.5.0.4` or later.
+1. Update add-on + integration to `v2.5.0.5` or later.
 2. Restart Home Assistant.
 3. Delete the existing `PSEG Long Island` integration entry.
 4. Restart Home Assistant again.
@@ -153,12 +153,12 @@ Validation (must pass):
 Action:
 - If using HACS: update integration to latest `main`
 - If manual: replace `/config/custom_components/psegli` with latest folder from this repo
-- Ensure installed integration version is `2.5.0.4` or newer
+- Ensure installed integration version is `2.5.0.5` or newer
 
 Validation (must pass):
 - Integration files on disk are updated
 - No duplicate old copy remains in another path
-- `custom_components/psegli/manifest.json` shows version `2.5.0.4` or newer
+- `custom_components/psegli/manifest.json` shows version `2.5.0.5` or newer
 
 ### Step 2.2 - Restart Home Assistant
 

@@ -29,14 +29,20 @@ _LOGGER = logging.getLogger(__name__)
 _COOKIE_OBTAINED_AT = "_cookie_obtained_at"
 
 # Home Assistant statistics metadata changed over time. Newer versions require
-# explicit mean_type; older versions do not define that field at all.
+# explicit fields like mean_type/unit_class; older versions do not define them.
 _STAT_METADATA_ANNOTATIONS = getattr(StatisticMetaData, "__annotations__", {})
 _STAT_METADATA_SUPPORTS_MEAN_TYPE = "mean_type" in _STAT_METADATA_ANNOTATIONS
+_STAT_METADATA_SUPPORTS_UNIT_CLASS = "unit_class" in _STAT_METADATA_ANNOTATIONS
 try:
     from homeassistant.components.recorder.models import StatisticMeanType
     _MEAN_TYPE_NONE = StatisticMeanType.NONE
 except Exception:  # pragma: no cover - older HA versions
     _MEAN_TYPE_NONE = 0
+try:
+    from homeassistant.components.recorder.models import StatisticUnitClass
+    _UNIT_CLASS_ENERGY = StatisticUnitClass.ENERGY
+except Exception:  # pragma: no cover - older HA versions
+    _UNIT_CLASS_ENERGY = "energy"
 
 
 def _log_cookie_age(hass: HomeAssistant, label: str) -> None:
@@ -648,6 +654,8 @@ async def _process_chart_data(hass: HomeAssistant, chart_data: dict[str, Any]) -
                 }
                 if _STAT_METADATA_SUPPORTS_MEAN_TYPE:
                     metadata["mean_type"] = _MEAN_TYPE_NONE
+                if _STAT_METADATA_SUPPORTS_UNIT_CLASS:
+                    metadata["unit_class"] = _UNIT_CLASS_ENERGY
 
                 _LOGGER.debug("Using metadata: %s", metadata)
 

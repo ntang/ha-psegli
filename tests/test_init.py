@@ -410,6 +410,29 @@ class TestProcessChartData:
         metadata = mock_add_stats.call_args.args[1]
         assert metadata["mean_type"] == 0
 
+    @patch("custom_components.psegli.get_last_cumulative_kwh", new_callable=AsyncMock)
+    @patch("custom_components.psegli.async_add_external_statistics", new_callable=AsyncMock)
+    async def test_includes_unit_class_when_supported(
+        self, mock_add_stats, mock_get_last_cumulative, mock_hass
+    ):
+        """Include unit_class in metadata when the HA runtime supports it."""
+        mock_get_last_cumulative.return_value = 0.0
+        chart_data = {
+            "Off-Peak Usage": {
+                "valid_points": [
+                    {"timestamp": datetime(2026, 3, 1, 5, 0, tzinfo=timezone.utc), "value": 1.25}
+                ]
+            }
+        }
+
+        with patch("custom_components.psegli._STAT_METADATA_SUPPORTS_UNIT_CLASS", True), patch(
+            "custom_components.psegli._UNIT_CLASS_ENERGY", "energy"
+        ):
+            await _process_chart_data(mock_hass, chart_data)
+
+        metadata = mock_add_stats.call_args.args[1]
+        assert metadata["unit_class"] == "energy"
+
 
 # ---------------------------------------------------------------------------
 # async_update_options

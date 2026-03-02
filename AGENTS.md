@@ -80,4 +80,4 @@ Scheduled (:00/:30):
 
 ## Version
 
-`manifest.json` and `config.yaml` share version `2.5.0.4`. Update both when releasing.
+`manifest.json` and `config.yaml` share version `2.5.0.5`. Update both when releasing.
