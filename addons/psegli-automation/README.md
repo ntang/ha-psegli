@@ -20,7 +20,7 @@ This Home Assistant addon provides automated login services for PSEG Long Island
 
    - Go to **Settings** → **Add-ons** → **Add-on Store**
    - Click the three dots menu (⋮) → **Repositories**
-   - Add: `https://github.com/daswass/ha-psegli`
+   - Add: `https://github.com/ntang/ha-psegli`
    - Click **Add**
 
 2. **Install the addon:**
@@ -89,7 +89,7 @@ The PSEG Long Island integration will automatically use this addon when availabl
 
 ## reCAPTCHA Handling
 
-The addon logs in directly to mysmartenergy.psegliny.com, which uses Google invisible reCAPTCHA. The addon handles this by:
+The addon logs in directly to mysmartenergy.psegliny.com (no separate Okta/MFA step in this flow), which uses Google invisible reCAPTCHA. The addon handles this by:
 
 - Using `playwright-stealth` for anti-fingerprinting
 - Maintaining a persistent browser profile (`.browser_profile/`) to build reCAPTCHA trust over time

@@ -1,206 +1,139 @@
 # PSEG Long Island Integration Installation Guide
 
-This guide will walk you through installing and configuring the PSEG Long Island integration for Home Assistant.
+This guide covers the post-overhaul install flow and auth model.
 
 ## Prerequisites
 
-- Home Assistant (Core, OS, or Supervised)
-- PSEG Long Island account with Smart Energy enabled
-- Access to your Home Assistant configuration directory
+- Home Assistant OS, Supervised, or Core
+- PSEG Long Island account credentials (email/username + password)
+- Access to your Home Assistant config directory
 
-## Installation Methods
+## Install Order (Recommended)
 
-### Method 1: HACS (Recommended)
+1. Install and start the automation add-on
+2. Install the custom integration
+3. Configure integration with credentials
 
-1. **Install HACS** (if not already installed)
+This order gives the integration immediate access to automated cookie retrieval.
 
-   - Follow the [HACS installation guide](https://hacs.xyz/docs/installation/installation/)
-   - Restart Home Assistant after installation
+## 1) Install the Automation Add-on
 
-2. **Add Custom Repository**
+Add-on source repository:
+- `https://github.com/ntang/ha-psegli`
 
-   - Go to **HACS** > **Integrations**
-   - Click the three dots menu (⋮) in the top right
-   - Select **Custom repositories**
-   - Add repository: `https://github.com/yourusername/ha-psegli`
-   - Category: **Integration**
+In Home Assistant:
+1. Go to `Settings -> Add-ons -> Add-on Store`
+2. Open menu `... -> Repositories`
+3. Add `https://github.com/ntang/ha-psegli`
+4. Install `PSEG Long Island Automation`
+5. Start the add-on
 
-3. **Install Integration**
+Verification:
+- Add-on status is `Running`
+- Add-on logs do not show startup errors
 
-   - Find "PSEG Long Island" in the HACS Integrations list
-   - Click **Download**
-   - Restart Home Assistant
+Technical endpoint check (optional):
+- `GET /health` should return healthy from the add-on service
 
-4. **Configure Integration**
-   - Go to **Settings** > **Devices & Services** > **Integrations**
-   - Click **+ Add Integration**
-   - Search for "PSEG Long Island" and select it
-   - Follow the configuration wizard
+## 2) Install the Integration
 
-### Method 2: Manual Installation
+### Option A: HACS (if using HACS)
 
-1. **Download Repository**
+1. In HACS, add this repo as a custom integration repository:
+- `https://github.com/ntang/ha-psegli`
+2. Install `PSEG Long Island`
+3. Restart Home Assistant
 
-   ```bash
-   git clone https://github.com/yourusername/ha-psegli.git
-   ```
+### Option B: Manual install
 
-2. **Copy Integration Files**
+1. Copy integration folder into HA config:
 
-   ```bash
-   # Copy the integration to your custom_components directory
-   cp -r ha-psegli/custom_components/psegli /path/to/homeassistant/config/custom_components/
-   ```
+```bash
+cp -r custom_components/psegli /config/custom_components/
+```
 
-3. **Restart Home Assistant**
+2. Restart Home Assistant
 
-   - Restart Home Assistant to load the new integration
+## 3) Configure the Integration
 
-4. **Configure Integration**
-   - Go to **Settings** > **Devices & Services** > **Integrations**
-   - Click **+ Add Integration**
-   - Search for "PSEG Long Island" and select it
-   - Follow the configuration wizard
+In Home Assistant:
+1. Go to `Settings -> Devices & Services`
+2. Click `Add Integration`
+3. Search for `PSEG Long Island`
+4. Enter:
+- `username`
+- `password`
+- optional `cookie`
 
-## Configuration
+Behavior during setup:
+- If `cookie` is empty, integration tries add-on login first.
+- If add-on returns cookie, integration validates it before saving.
+- If CAPTCHA is triggered, setup shows a `captcha_required` error; retry.
 
-### Initial Setup
+## Auth Model Changes (from legacy flow)
 
-1. **Add Integration**
+Old model:
+- Multi-step path through myaccount/Okta/MFA
 
-   - Navigate to **Settings** > **Devices & Services** > **Integrations**
-   - Click **+ Add Integration**
-   - Search for "PSEG Long Island"
+Current model:
+- Direct login to `mysmartenergy.psegliny.com` via add-on browser automation
+- Cookie string is the runtime auth token used by the integration
+- No MFA submission service (`enter_mfa_code`) in current architecture
 
-2. **Enter Credentials**
+Why this changed:
+- The old chain was operationally fragile and caused repeated auth/setup failures.
+- The direct flow is simpler and has better reliability in production.
 
-   - **Username**: Your PSEG Long Island account username/email
-   - **Password**: Your PSEG Long Island account password
-   - **Cookie** (Optional): If you have a valid cookie, enter it directly. If left empty, the integration will attempt to get one from the automation addon if available.
+## Manual Cookie Mode (Fallback)
 
-3. **Complete Setup**
-   - Click **Submit** to complete the configuration
-   - The integration will validate your credentials and cookie
+The integration can run with a manually provided cookie if the add-on is unavailable.
 
-### Cookie Management
+Caveats:
+- No automated browser login
+- No automatic recovery when cookie expires
+- You must reconfigure/update cookie manually
 
-The integration stores your authentication cookie and uses it for all API requests. When cookies expire:
+## Runtime Refresh Behavior
 
-1. **Automatic Refresh**: If the automation addon is available and healthy, the integration will automatically attempt to get a new cookie
-2. **Manual Update**: Update the cookie via **Settings** > **Devices & Services** > **PSEG Long Island** > **Configure**
-3. **Direct Input**: Manually obtain a cookie from your browser and enter it directly
+- Scheduled checks occur at `XX:00` and `XX:30`.
+- If cookie validates, refresh is skipped.
+- If invalid, integration requests fresh cookie from add-on.
+- Manual refresh service is available: `psegli.refresh_cookie`.
 
-### Options Flow
+## Verify Successful Operation
 
-To update your configuration:
-
-1. Go to **Settings** > **Devices & Services** > **PSEG Long Island**
-2. Click **Configure**
-3. **Update Cookie**: Enter a new cookie directly, or leave empty to attempt automatic refresh via addon
-4. Click **Submit**
-
-## Automation Addon (Optional)
-
-The PSEG Long Island Automation Addon provides automatic cookie refresh capabilities:
-
-### Addon Installation
-
-1. **Install Addon**
-
-   - Go to **Settings** > **Add-ons** > **Add-on Store**
-   - Add the PSEG Long Island Automation repository
-   - Install the addon
-
-2. **Configure Addon**
-
-   - Set your PSEG credentials in the addon configuration
-   - Start the addon
-
-3. **Integration Detection**
-   - The integration will automatically detect and use the addon when available
-   - No additional configuration required
-
-## Verification
-
-### Check Integration Status
-
-1. **Integration Status**
-
-   - Go to **Settings** > **Devices & Services** > **PSEG Long Island**
-   - Status should show as "Configured"
-
-2. **Data Availability**
-   - Check the Home Assistant logs for successful data fetching
-   - Look for PSEG data in the Energy Dashboard
-
-### Test Services
-
-1. **Manual Statistics Update**
-
-   ```yaml
-   service: psegli.update_statistics
-   data:
-     days_back: 0
-   ```
-
-2. **Check Logs**
-   - Enable debug logging for the integration
-   - Monitor logs for successful data retrieval
+1. Integration loads without auth errors
+2. `psegli.update_statistics` service succeeds
+3. Long-term statistics appear in Energy Dashboard
+4. Logs show successful data fetch and no repeated auth failures
 
 ## Troubleshooting
 
-### Common Issues
+### Add-on unavailable
 
-1. **Integration Won't Load**
+- Confirm add-on is running
+- Check add-on logs
+- Restart add-on and retry integration setup
 
-   - Verify files are in the correct location
-   - Check Home Assistant logs for errors
-   - Restart Home Assistant
+### CAPTCHA required repeatedly
 
-2. **Authentication Failed**
+- Retry setup/refresh later
+- Persistent browser profile usually reduces repeated CAPTCHA prompts
 
-   - Verify your PSEG credentials
-   - Check if your cookie is valid
-   - Try updating the cookie manually
+### Invalid auth
 
-3. **No Data Available**
-   - Ensure your PSEG account has Smart Energy enabled
-   - Check if the integration is fetching data successfully
-   - Verify the automation addon is running (if using)
+- Reconfigure integration and/or call `psegli.refresh_cookie`
+- Verify credentials are current and account is not locked
 
-### Debug Logging
+### No data updates
 
-Enable debug logging to troubleshoot issues:
+- Run `psegli.update_statistics` with `days_back: 0`
+- Check logs under `custom_components.psegli`
 
-```yaml
-logger:
-  custom_components.psegli: debug
-```
+## Related Docs
 
-### Getting Help
-
-- Check the [README.md](README.md) for detailed information
-- Review the Home Assistant logs for error messages
-- Create an issue on the GitHub repository
-
-## Next Steps
-
-After successful installation:
-
-1. **Monitor Data**: Check the Energy Dashboard for PSEG usage data
-2. **Set Up Automations**: Create automations based on energy usage patterns
-3. **Configure Notifications**: Set up alerts for high usage periods
-4. **Explore Services**: Use the manual update service for data backfilling
-
-## Support
-
-For additional support:
-
-- Review the troubleshooting section above
-- Check the Home Assistant logs
-- Create an issue on the GitHub repository
-- Review the integration documentation
-
----
-
-**Note**: This integration is designed to work independently without requiring the automation addon. The addon provides additional convenience for automatic cookie refresh but is not required for basic functionality.
+- Root overview: [`README.md`](README.md)
+- Add-on details: [`addons/psegli-automation/README.md`](addons/psegli-automation/README.md)
+- Integration details: [`custom_components/psegli/README.md`](custom_components/psegli/README.md)
+- Overhaul plan: [`docs/plans/2026-03-01-robustness-overhaul-plan.md`](docs/plans/2026-03-01-robustness-overhaul-plan.md)
+- Auth migration notes: [`docs/auth-overhaul.md`](docs/auth-overhaul.md)
