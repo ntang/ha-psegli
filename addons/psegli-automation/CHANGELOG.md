@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.5.1
+
 - Add retry with jittered backoff for add-on `/login` transport failures (connection error, timeout, server disconnected)
   - Up to 3 attempts with increasing delay
   - Terminal responses (CAPTCHA, invalid credentials) are never retried
