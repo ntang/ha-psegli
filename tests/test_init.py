@@ -13,6 +13,7 @@ from custom_components.psegli import (
     async_update_options,
     _get_active_entry,
     get_last_cumulative_kwh,
+    _CAPTCHA_RETRY_TASK,
     _SIGNAL_LAST_AUTH_PROBE_AT,
     _SIGNAL_LAST_AUTH_PROBE_RESULT,
     _SIGNAL_LAST_REFRESH_ATTEMPT_AT,
@@ -913,6 +914,62 @@ class TestSignalTracking:
         import re
         for record in refresh_logs:
             assert re.search(r"\[refresh:[0-9a-f]{8}\]", record.message)
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_captcha_schedules_auto_retry(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """CAPTCHA result schedules an auto-retry task in domain_data."""
+        mock_health.return_value = True
+        mock_fresh.side_effect = [
+            LoginResult(cookies=None, category=CATEGORY_CAPTCHA_REQUIRED),
+            LoginResult(cookies="MM_SID=fresh", category="ok", addon_url="http://localhost:8000"),
+        ]
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
+        domain_data = mock_hass.data[DOMAIN]
+        assert _CAPTCHA_RETRY_TASK in domain_data
+        assert domain_data[_CAPTCHA_RETRY_TASK] is not None
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_captcha_retry_cancelled_on_unload(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """CAPTCHA retry task is cancelled when the integration is unloaded."""
+        mock_health.return_value = True
+        mock_fresh.return_value = LoginResult(
+            cookies=None, category=CATEGORY_CAPTCHA_REQUIRED
+        )
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
+        # Simulate unload: remove entry from domain data, set entries to empty
+        mock_hass.data[DOMAIN].pop(mock_config_entry.entry_id, None)
+        mock_hass.config_entries.async_entries.return_value = []
+        await async_unload_entry(mock_hass, mock_config_entry)
+
+        domain_data = mock_hass.data[DOMAIN]
+        retry_task = domain_data.get(_CAPTCHA_RETRY_TASK)
+        assert retry_task is None or retry_task.done()
 
 
 class TestProcessChartDataSignals:

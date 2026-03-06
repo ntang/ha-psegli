@@ -39,6 +39,8 @@ from .const import (
     NOTIFICATION_CRITICAL_ONLY,
     NOTIFICATION_VERBOSE,
     DEFAULT_ADDON_URL,
+    CAPTCHA_AUTO_RETRY_COUNT,
+    CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
 )
 from .psegli import InvalidAuth, PSEGLIClient, PSEGLIError
 from .auto_login import (
@@ -60,6 +62,7 @@ _AUTH_FAILURE_COUNT = "_consecutive_auth_failures"
 _LAST_AUTH_LOOP_NOTIFICATION_AT = "_last_chart_auth_loop_notification_at"
 _REFRESH_IN_PROGRESS_TASK = "_refresh_in_progress_task"
 _PENDING_AUTH_REFRESH_TASK = "_pending_auth_refresh_task"
+_CAPTCHA_RETRY_TASK = "_captcha_retry_task"
 
 _AUTH_FAILURE_THRESHOLD = 3
 _AUTH_FAILURE_REFRESH_DELAY_SECONDS = 10
@@ -488,6 +491,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "notification_id": "psegli_captcha_required",
                 },
             )
+            await _schedule_captcha_retry(trigger_reason)
             return False
 
         if not login_result.cookies:
@@ -658,6 +662,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         task = asyncio.create_task(_delayed_refresh())
         domain_data[_PENDING_AUTH_REFRESH_TASK] = task
+
+    async def _schedule_captcha_retry(trigger_reason: str) -> None:
+        """Schedule delayed CAPTCHA auto-retries after a CAPTCHA failure."""
+        # Cancel any existing CAPTCHA retry task
+        existing = domain_data.get(_CAPTCHA_RETRY_TASK)
+        if existing and not existing.done():
+            existing.cancel()
+            try:
+                await existing
+            except asyncio.CancelledError:
+                pass
+
+        async def _captcha_retry_loop() -> None:
+            try:
+                for i in range(CAPTCHA_AUTO_RETRY_COUNT):
+                    delay_min = CAPTCHA_AUTO_RETRY_DELAYS_MINUTES[i] if i < len(CAPTCHA_AUTO_RETRY_DELAYS_MINUTES) else CAPTCHA_AUTO_RETRY_DELAYS_MINUTES[-1]
+                    _LOGGER.info(
+                        "CAPTCHA auto-retry %d/%d scheduled in %d minutes (trigger: %s)",
+                        i + 1, CAPTCHA_AUTO_RETRY_COUNT, delay_min, trigger_reason,
+                    )
+                    await asyncio.sleep(delay_min * 60)
+                    result = await _refresh_cookie_shared(
+                        trigger_reason=f"captcha_auto_retry_{i + 1}",
+                        notify_on_success=True,
+                        notify_on_failure=False,
+                    )
+                    if result:
+                        _LOGGER.info("CAPTCHA auto-retry %d/%d succeeded", i + 1, CAPTCHA_AUTO_RETRY_COUNT)
+                        return
+                    # Stop if failure is no longer CAPTCHA-related
+                    last_category = domain_data.get(_SIGNAL_LAST_REFRESH_FAILURE_CATEGORY)
+                    if last_category != CATEGORY_CAPTCHA_REQUIRED:
+                        _LOGGER.info(
+                            "CAPTCHA auto-retry stopping: failure category changed to %s",
+                            last_category,
+                        )
+                        return
+                _LOGGER.warning("All %d CAPTCHA auto-retries exhausted", CAPTCHA_AUTO_RETRY_COUNT)
+            except asyncio.CancelledError:
+                _LOGGER.debug("CAPTCHA auto-retry task cancelled")
+                raise
+            finally:
+                if domain_data.get(_CAPTCHA_RETRY_TASK) is retry_task:
+                    domain_data[_CAPTCHA_RETRY_TASK] = None
+
+        retry_task = asyncio.create_task(_captcha_retry_loop())
+        domain_data[_CAPTCHA_RETRY_TASK] = retry_task
 
     # Business logic for updating statistics — called directly by service handler
     # and by internal callers (cookie refresh, scheduler) without the fake Call object.
@@ -1127,6 +1178,20 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except Exception as e:
                     _LOGGER.warning("Error cancelling pending auth refresh task: %s", e)
                 domain_data.pop(_PENDING_AUTH_REFRESH_TASK, None)
+
+            # Cancel any CAPTCHA auto-retry task.
+            captcha_retry = domain_data.get(_CAPTCHA_RETRY_TASK)
+            if captcha_retry is not None:
+                try:
+                    if not captcha_retry.done():
+                        captcha_retry.cancel()
+                        try:
+                            await captcha_retry
+                        except asyncio.CancelledError:
+                            pass
+                except Exception as e:
+                    _LOGGER.warning("Error cancelling CAPTCHA retry task: %s", e)
+                domain_data[_CAPTCHA_RETRY_TASK] = None
 
             # Cancel any in-flight shared refresh task.
             in_flight_refresh = domain_data.get(_REFRESH_IN_PROGRESS_TASK)
