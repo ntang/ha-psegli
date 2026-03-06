@@ -35,6 +35,21 @@ class TestFastAPIEndpoints:
             assert data["service"] == "psegli-automation"
 
     @pytest.mark.asyncio
+    async def test_profile_status_contract(self):
+        """Phase D: /profile-status returns required keys (profile_created_at, profile_last_success_at, etc.)."""
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/profile-status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "profile_created_at" in data
+            assert "profile_last_success_at" in data
+            assert "recent_captcha_count" in data
+            assert "profile_size_bytes" in data
+            assert "warmup_state" in data
+            assert data["warmup_state"] in ("idle", "warming", "ready", "failed")
+
+    @pytest.mark.asyncio
     async def test_no_mfa_endpoint(self):
         """Verify /login/mfa returns 404 (removed)."""
         transport = ASGITransport(app=app)

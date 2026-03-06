@@ -135,6 +135,21 @@ async def check_addon_health(addon_url: Optional[str] = None) -> bool:
     return False
 
 
+async def get_addon_profile_status(addon_url: Optional[str] = None) -> Optional[dict]:
+    """Fetch /profile-status from addon (Phase D). Best effort; returns None on any error."""
+    base_url = _normalize_addon_url(addon_url)
+    status_url = f"{base_url}/profile-status"
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(status_url) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        pass
+    return None
+
+
 async def _attempt_login(
     session: aiohttp.ClientSession,
     login_data: dict,

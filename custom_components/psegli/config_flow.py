@@ -22,7 +22,12 @@ from .const import (
 )
 from .psegli import PSEGLIClient, PSEGLIError
 from .exceptions import InvalidAuth
-from .auto_login import get_fresh_cookies, CAPTCHA_REQUIRED, CATEGORY_CAPTCHA_REQUIRED
+from .auto_login import (
+    get_fresh_cookies,
+    check_addon_health,
+    CAPTCHA_REQUIRED,
+    CATEGORY_CAPTCHA_REQUIRED,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +35,30 @@ _LOGGER = logging.getLogger(__name__)
 def _normalize_addon_url(value: str | None) -> str:
     """Normalize addon URL with default fallback and no trailing slash."""
     return (value or DEFAULT_ADDON_URL).rstrip("/")
+
+
+async def _run_preflight(hass: HomeAssistant, addon_url: str) -> dict[str, str]:
+    """Phase G: Check add-on readiness. Returns status and message for UX.
+
+    Does not block setup; allows continuation with clear status.
+    """
+    try:
+        healthy = await check_addon_health(addon_url)
+        if healthy:
+            return {
+                "preflight_status": "ready",
+                "preflight_message": "Add-on is reachable. You can enter credentials below.",
+            }
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return {
+        "preflight_status": "unreachable",
+        "preflight_message": (
+            "Add-on is not reachable at the default URL. "
+            "Install and start the PSEG Long Island Automation add-on from the Add-on Store, "
+            "or enter the add-on URL in the field below (e.g. from the add-on Info tab)."
+        ),
+    }
 
 
 class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -130,10 +159,13 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during setup")
                 errors["base"] = "unknown"
 
+        # Phase G: run preflight and show status so user sees readiness before submitting
+        preflight = await _run_preflight(self.hass, DEFAULT_ADDON_URL)
         return self.async_show_form(
             step_id="user",
             data_schema=self._get_schema(),
             errors=errors,
+            description_placeholders=preflight,
         )
 
     def _get_schema(self):

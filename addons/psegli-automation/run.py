@@ -15,7 +15,8 @@ import uvicorn
 from fastapi import FastAPI, Form
 from pydantic import BaseModel
 
-from auto_login import CAPTCHA_REQUIRED_SENTINEL, get_fresh_cookies
+from auto_login import CAPTCHA_REQUIRED_SENTINEL, get_fresh_cookies, get_effective_profile_dir
+from profile_state import get_profile_status
 
 # Set HEADED=1 to run browser in headed mode (visible) for debugging
 HEADED = os.environ.get("HEADED", "").lower() in ("1", "true", "yes")
@@ -73,6 +74,13 @@ class LoginResponse(BaseModel):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "psegli-automation"}
+
+
+@app.get("/profile-status")
+async def profile_status():
+    """Profile status for Phase D: profile_created_at, last_success, captcha count, size, warmup_state."""
+    profile_dir = get_effective_profile_dir()
+    return get_profile_status(profile_dir)
 
 
 @app.post("/login", response_model=LoginResponse)

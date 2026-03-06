@@ -2,7 +2,7 @@
   "step": {
     "user": {
       "title": "PSEG Long Island",
-      "description": "Enter your PSEG Long Island credentials. The integration will automatically log in and obtain authentication cookies.",
+      "description": "Enter your PSEG Long Island credentials. The integration will automatically log in and obtain authentication cookies. Add-on status: {preflight_status}. {preflight_message}",
       "data": {
         "username": "Username/Email",
         "password": "Password",

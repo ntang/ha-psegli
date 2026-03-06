@@ -309,7 +309,7 @@ To reduce ambiguity when coding, use these concrete contracts:
 - `custom_components/psegli/supervisor.py`
   - `async_get_addon_url_from_supervisor(hass) -> str | None`
 - `custom_components/psegli/auto_login.py`
-  - keep `LoginResult.addon_url` semantics: non-transport responses carry URL; full disconnect returns `None`.
+  - **`LoginResult.addon_url`** is already implemented: non-transport responses (success, CAPTCHA, invalid_credentials, 4xx) carry the endpoint URL that returned the response; full disconnect (exhausted retries) leaves it `None`. Phase B (breaker/notifications) should rely on this field for “last working URL” and must not remove or change this semantics.
   - candidate ordering remains deterministic and deduped.
 - `custom_components/psegli/__init__.py`
   - keep `_get_addon_url` precedence: `options > data > supervisor > default`.
@@ -327,6 +327,7 @@ To reduce ambiguity when coding, use these concrete contracts:
 - `custom_components/psegli/config_flow.py`
 - `custom_components/psegli/translations/en/config_flow.json`
 - `addons/psegli-automation/auto_login.py`
+- `addons/psegli-automation/profile_state.py` (new, Phase D)
 - `addons/psegli-automation/run.py`
 - `tests/test_supervisor.py` (new)
 - `tests/test_auto_login_integration.py`
@@ -353,3 +354,5 @@ To reduce ambiguity when coding, use these concrete contracts:
 - Integrated Claude’s recommendations into Cursor’s phase model.
 - Updated scope to reflect already-landed URL fallback + auto-promotion work.
 - Added decision table (adopt/modify/defer) and explicit deferred RFC boundary.
+- **d967dd7:** Added initial implementation defaults (v1), Phase A cache scope clarification (in-cycle vs persistent learning), parallel execution waves and constraints, and executor-facing implementation contracts.
+- **Phases D + G implemented (Cursor):** Add-on profile health + rotate on corruption, `/profile-status` endpoint and warm-up, integration profile-status fetch and warmup_state logging; config flow preflight (add-on readiness + remediation message). Tests: profile-status contract, rotation on launch failure, get_addon_profile_status, preflight ready/unreachable.

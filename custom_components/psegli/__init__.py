@@ -45,6 +45,7 @@ from .supervisor import async_get_addon_url_from_supervisor
 from .auto_login import (
     get_fresh_cookies,
     check_addon_health,
+    get_addon_profile_status,
     CAPTCHA_REQUIRED,
     LoginResult,
     CATEGORY_CAPTCHA_REQUIRED,
@@ -643,6 +644,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 CATEGORY_ADDON_UNREACHABLE,
             )
             return False
+
+        # Phase D: best-effort profile-status for warmup_state visibility
+        profile_status = await get_addon_profile_status(addon_url)
+        if profile_status and profile_status.get("warmup_state") != "ready":
+            _LOGGER.info(
+                "[refresh:%s] Addon profile warmup_state=%s (profile may still be building trust)",
+                attempt_id,
+                profile_status.get("warmup_state", "unknown"),
+            )
 
         login_result = await get_fresh_cookies(
             username,

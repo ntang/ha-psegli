@@ -280,3 +280,37 @@ class TestPSEGAutoLogin:
             MockLogin.assert_called_once_with(
                 email="user", password="pass", headless=True
             )
+
+    @pytest.mark.asyncio
+    async def test_setup_browser_rotates_profile_on_launch_failure(self, mock_playwright, tmp_path):
+        """Phase D: When launch fails once (simulated corruption), profile is rotated and retry succeeds."""
+        pw, context, page = mock_playwright
+        login = PSEGAutoLogin(
+            email="test@example.com",
+            password="testpass",
+            profile_dir=str(tmp_path / "profile"),
+        )
+        os.makedirs(login.profile_dir, exist_ok=True)
+        call_count = 0
+
+        async def launch_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Simulated profile corruption")
+            return context
+
+        # Use MagicMock for chromium so launch_persistent_context is a stable reference
+        pw.chromium = MagicMock()
+        pw.chromium.launch_persistent_context = AsyncMock(side_effect=launch_side_effect)
+
+        with patch("auto_login.async_playwright") as mock_ap:
+            mock_ap.return_value.start = AsyncMock(return_value=pw)
+            with patch("auto_login.Stealth") as mock_stealth:
+                mock_stealth.return_value.apply_stealth_async = AsyncMock()
+            with patch("auto_login.record_profile_created"):
+                with patch("auto_login.record_profile_failed"):
+                    result = await login.setup_browser()
+
+        assert result is True
+        assert call_count == 2

@@ -6,6 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
+# Phase D: avoid real HTTP to /profile-status in refresh path (all tests in this module)
+@pytest.fixture(autouse=True)
+def mock_get_addon_profile_status():
+    """Mock get_addon_profile_status so refresh path does not hit the network."""
+    with patch("custom_components.psegli.get_addon_profile_status", new_callable=AsyncMock, return_value=None):
+        yield
+
 from custom_components.psegli import (
     _process_chart_data,
     async_setup_entry,

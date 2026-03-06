@@ -175,13 +175,29 @@ class TestPSEGLIConfigFlow:
         assert result["type"] == "create_entry"
         assert result["data"][CONF_COOKIE] == ""
 
-    async def test_user_step_shows_form_on_first_visit(self, mock_hass):
-        """First visit (no input) shows the form."""
+    @patch("custom_components.psegli.config_flow.check_addon_health", new_callable=AsyncMock)
+    async def test_user_step_shows_form_on_first_visit(self, mock_health, mock_hass):
+        """First visit (no input) shows the form with preflight status."""
+        mock_health.return_value = True
         flow = _make_config_flow(mock_hass)
         result = await flow.async_step_user(None)
 
         assert result["type"] == "form"
         assert result["step_id"] == "user"
+        assert "description_placeholders" in result
+        assert result["description_placeholders"]["preflight_status"] == "ready"
+
+    @patch("custom_components.psegli.config_flow.check_addon_health", new_callable=AsyncMock)
+    async def test_user_step_preflight_unreachable_shows_remediation(self, mock_health, mock_hass):
+        """Phase G: When add-on is unreachable, form shows unreachable status and message."""
+        mock_health.return_value = False
+        flow = _make_config_flow(mock_hass)
+        result = await flow.async_step_user(None)
+
+        assert result["type"] == "form"
+        assert result["description_placeholders"]["preflight_status"] == "unreachable"
+        assert "not reachable" in result["description_placeholders"]["preflight_message"]
+        assert "Install and start" in result["description_placeholders"]["preflight_message"]
 
     async def test_single_instance_enforcement(self, mock_hass):
         """Second config flow is aborted by unique ID."""

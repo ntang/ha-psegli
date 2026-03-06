@@ -14,6 +14,7 @@ from custom_components.psegli.auto_login import (
     CATEGORY_UNKNOWN_ERROR,
     LoginResult,
     get_fresh_cookies,
+    get_addon_profile_status,
     _attempt_login,
     _MAX_LOGIN_RETRIES,
 )
@@ -292,3 +293,53 @@ class TestGetFreshCookiesRetry:
         assert seen_urls[0] == "http://localhost:8000"
         assert any("psegli-automation" in url for url in seen_urls[1:])
         assert mock_sleep.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_addon_profile_status_returns_dict_on_200(self):
+        """Phase D: get_addon_profile_status returns payload when addon returns 200."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "profile_created_at": 123.0,
+                "profile_last_success_at": 456.0,
+                "recent_captcha_count": 0,
+                "profile_size_bytes": 1024,
+                "warmup_state": "ready",
+            }
+        )
+        mock_get = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_resp),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
+        mock_session = MagicMock()
+        mock_session.get = mock_get
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("custom_components.psegli.auto_login.aiohttp.ClientSession", return_value=mock_session):
+            result = await get_addon_profile_status("http://localhost:8000")
+
+        assert result is not None
+        assert result["warmup_state"] == "ready"
+        assert result["recent_captcha_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_addon_profile_status_returns_none_on_failure(self):
+        """Phase D: get_addon_profile_status returns None on timeout or non-200."""
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(side_effect=asyncio.TimeoutError()),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("custom_components.psegli.auto_login.aiohttp.ClientSession", return_value=mock_session):
+            result = await get_addon_profile_status("http://localhost:8000")
+
+        assert result is None
