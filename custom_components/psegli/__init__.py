@@ -39,6 +39,7 @@ from .const import (
     NOTIFICATION_CRITICAL_ONLY,
     NOTIFICATION_VERBOSE,
     DEFAULT_ADDON_URL,
+    OPTION_ADDON_URL_AUTO,
     CAPTCHA_AUTO_RETRY_COUNT,
     CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
     FIRST_START_GRACE_RETRIES,
@@ -80,7 +81,6 @@ _AUTH_FAILURE_NOTIFICATION_COOLDOWN = timedelta(hours=24)
 _SUPERVISOR_DISCOVERED_ADDON_URL = "_supervisor_discovered_addon_url"
 _SUPERVISOR_DISCOVERED_ADDON_URL_AT = "_supervisor_discovered_addon_url_at"
 _SUPERVISOR_DISCOVERY_TTL = timedelta(seconds=60)
-_OPTION_ADDON_URL_AUTO = "_addon_url_auto"
 
 # Add-on transport circuit breaker state
 _ADDON_TRANSPORT_FAILURE_COUNT = "_addon_transport_failure_count"
@@ -208,7 +208,7 @@ def _get_configured_addon_url(entry: ConfigEntry | None) -> str:
 
 def _is_auto_managed_addon_url(entry: ConfigEntry | None) -> bool:
     """Return True when addon_url option is integration-managed discovery output."""
-    return bool(entry and entry.options.get(_OPTION_ADDON_URL_AUTO))
+    return bool(entry and entry.options.get(OPTION_ADDON_URL_AUTO))
 
 
 async def _get_cached_supervisor_addon_url(hass: HomeAssistant) -> str | None:
@@ -276,7 +276,7 @@ def _persist_discovered_addon_url(
     updated_options = {
         **entry.options,
         CONF_ADDON_URL: normalized,
-        _OPTION_ADDON_URL_AUTO: True,
+        OPTION_ADDON_URL_AUTO: True,
     }
     hass.config_entries.async_update_entry(entry, options=updated_options)
     _LOGGER.info(

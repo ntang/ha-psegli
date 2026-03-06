@@ -14,6 +14,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_ADDON_URL,
     DEFAULT_ADDON_URL,
+    OPTION_ADDON_URL_AUTO,
     CONF_DIAGNOSTIC_LEVEL,
     CONF_NOTIFICATION_LEVEL,
     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
@@ -33,7 +34,6 @@ from .auto_login import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-_OPTION_ADDON_URL_AUTO = "_addon_url_auto"
 
 
 def _normalize_addon_url(value: str | None) -> str:
@@ -41,7 +41,7 @@ def _normalize_addon_url(value: str | None) -> str:
     return (value or DEFAULT_ADDON_URL).rstrip("/")
 
 
-async def _run_preflight(hass: HomeAssistant, addon_url: str) -> dict[str, str]:
+async def _run_preflight(_hass: HomeAssistant, addon_url: str) -> dict[str, str]:
     """Phase G: Check add-on readiness. Returns status and message for UX.
 
     Does not block setup; allows continuation with clear status.
@@ -110,11 +110,12 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
                             errors["base"] = "captcha_required"
                             preflight = await _run_preflight(self.hass, addon_url)
+                            # Ensure placeholders for step description (preflight_status, preflight_message)
                             return self.async_show_form(
                                 step_id="user",
                                 data_schema=self._get_schema(),
                                 errors=errors,
-                                description_placeholders=preflight,
+                                description_placeholders=dict(preflight),
                             )
                         elif login_result.cookies:
                             cookie = login_result.cookies
@@ -208,7 +209,7 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                     )
                 )
                 current_auto_managed = bool(
-                    self.config_entry.options.get(_OPTION_ADDON_URL_AUTO)
+                    self.config_entry.options.get(OPTION_ADDON_URL_AUTO)
                 )
                 addon_url = _normalize_addon_url(
                     user_input.get(CONF_ADDON_URL, current_addon_url)
@@ -233,9 +234,9 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                     ),
                 }
                 if manual_url_override:
-                    options_data.pop(_OPTION_ADDON_URL_AUTO, None)
+                    options_data.pop(OPTION_ADDON_URL_AUTO, None)
                 elif current_auto_managed:
-                    options_data[_OPTION_ADDON_URL_AUTO] = True
+                    options_data[OPTION_ADDON_URL_AUTO] = True
 
                 # If user provided a new cookie, validate it
                 if new_cookie:
@@ -276,7 +277,7 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                                     addon_url,
                                     discovered_url,
                                 )
-                                options_data[_OPTION_ADDON_URL_AUTO] = True
+                                options_data[OPTION_ADDON_URL_AUTO] = True
                             addon_url = discovered_url
                             options_data[CONF_ADDON_URL] = addon_url
 

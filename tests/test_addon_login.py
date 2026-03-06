@@ -308,9 +308,9 @@ class TestPSEGAutoLogin:
             mock_ap.return_value.start = AsyncMock(return_value=pw)
             with patch("auto_login.Stealth") as mock_stealth:
                 mock_stealth.return_value.apply_stealth_async = AsyncMock()
-            with patch("auto_login.record_profile_created"):
-                with patch("auto_login.record_profile_failed"):
-                    result = await login.setup_browser()
+                with patch("auto_login.record_profile_created"):
+                    with patch("auto_login.record_profile_failed"):
+                        result = await login.setup_browser()
 
         assert result is True
         assert call_count == 2

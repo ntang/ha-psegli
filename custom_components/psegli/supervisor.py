@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import ADDON_SLUG
 
@@ -116,8 +117,6 @@ def _extract_addon_url(payload: dict[str, Any]) -> str | None:
 
 async def async_get_addon_url_from_supervisor(hass: HomeAssistant) -> str | None:
     """Discover add-on URL from Supervisor when available."""
-    del hass  # placeholder for future HA-session usage
-
     base = _get_supervisor_base_url()
     url = f"{base}/addons/{ADDON_SLUG}/info"
     headers: dict[str, str] = {}
@@ -126,9 +125,9 @@ async def async_get_addon_url_from_supervisor(hass: HomeAssistant) -> str | None
         headers["Authorization"] = f"Bearer {token}"
 
     timeout = aiohttp.ClientTimeout(total=3)
+    session = async_get_clientsession(hass)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, headers=headers) as resp:
+        async with session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status != 200:
                     _LOGGER.debug(
                         "Supervisor addon discovery returned non-200: status=%s url=%s",

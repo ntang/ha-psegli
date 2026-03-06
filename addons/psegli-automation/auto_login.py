@@ -112,6 +112,31 @@ class PSEGAutoLogin:
         self.page.set_default_timeout(30000)
         return True
 
+    def _prune_old_corrupt_backups(self, keep: int = 2) -> None:
+        """Remove oldest .corrupt_* backup dirs so they do not accumulate."""
+        parent = os.path.dirname(self.profile_dir)
+        base = os.path.basename(self.profile_dir)
+        prefix = f"{base}.corrupt_"
+        try:
+            if not os.path.isdir(parent):
+                return
+            candidates = [
+                os.path.join(parent, name)
+                for name in os.listdir(parent)
+                if name.startswith(prefix) and os.path.isdir(os.path.join(parent, name))
+            ]
+            if len(candidates) <= keep:
+                return
+            candidates.sort(key=os.path.getmtime)
+            for path in candidates[:-keep]:
+                try:
+                    shutil.rmtree(path)
+                    _LOGGER.debug("Pruned old corrupt backup: %s", path)
+                except OSError as e:
+                    _LOGGER.debug("Could not prune %s: %s", path, e)
+        except OSError:
+            pass
+
     def _rotate_profile_dir(self) -> None:
         """On corruption: rename current profile dir and record fresh profile."""
         if not os.path.isdir(self.profile_dir):
@@ -122,9 +147,10 @@ class PSEGAutoLogin:
             backup = f"{self.profile_dir}.corrupt_{stamp}"
             shutil.move(self.profile_dir, backup)
             _LOGGER.warning("Rotated corrupted profile to %s", backup)
+            record_profile_created()
+            self._prune_old_corrupt_backups(keep=2)
         except OSError as e:
             _LOGGER.warning("Could not rotate profile dir %s: %s", self.profile_dir, e)
-        record_profile_created()
 
     def _should_rotate_profile_for_launch_error(self, err: Exception) -> bool:
         """Best-effort classifier for profile-corruption launch failures."""
@@ -149,10 +175,12 @@ class PSEGAutoLogin:
             await asyncio.sleep(1)
             set_warmup_state(WARMUP_READY)
             return True
-        except Exception as e:
-            _LOGGER.debug("Warm-up visit failed (non-fatal): %s", e)
+        except BaseException as e:
             set_warmup_state(WARMUP_FAILED)
-            return False
+            if isinstance(e, Exception):
+                _LOGGER.debug("Warm-up visit failed (non-fatal): %s", e)
+                return False
+            raise
 
     async def setup_browser(self) -> bool:
         """Initialize Playwright with persistent profile. Rotate on corruption and retry once."""

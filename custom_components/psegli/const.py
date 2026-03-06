@@ -31,3 +31,5 @@ EXPIRY_WARNING_THRESHOLD_PERCENT = 80
 # Addon configuration
 ADDON_SLUG = "psegli-automation"
 DEFAULT_ADDON_URL = "http://localhost:8000"
+# Internal options key: True when addon_url was auto-discovered (not user-set)
+OPTION_ADDON_URL_AUTO = "_addon_url_auto"

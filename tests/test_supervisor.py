@@ -10,19 +10,16 @@ import pytest
 from custom_components.psegli.supervisor import async_get_addon_url_from_supervisor
 
 
-def _mock_client_session(response: AsyncMock):
-    """Return a mocked aiohttp.ClientSession context manager."""
-    session = AsyncMock()
+def _mock_session_with_response(response: AsyncMock):
+    """Return a mock session whose get() returns an async context manager yielding response."""
+    session = MagicMock()
     session.get = MagicMock(
         return_value=AsyncMock(
             __aenter__=AsyncMock(return_value=response),
             __aexit__=AsyncMock(return_value=False),
         )
     )
-    return AsyncMock(
-        __aenter__=AsyncMock(return_value=session),
-        __aexit__=AsyncMock(return_value=False),
-    )
+    return session
 
 
 @pytest.mark.asyncio
@@ -41,8 +38,8 @@ async def test_supervisor_discovery_returns_network_host_port():
         }
     )
 
-    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value = _mock_client_session(response)
+    with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+        mock_get_session.return_value = _mock_session_with_response(response)
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url == "http://84ee8c30-psegli-automation:8000"
@@ -63,8 +60,8 @@ async def test_supervisor_discovery_handles_null_network_with_hostname():
         }
     )
 
-    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value = _mock_client_session(response)
+    with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+        mock_get_session.return_value = _mock_session_with_response(response)
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url == "http://84ee8c30-psegli-automation:8000"
@@ -85,8 +82,8 @@ async def test_supervisor_discovery_extracts_port_from_webui_template():
         }
     )
 
-    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value = _mock_client_session(response)
+    with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+        mock_get_session.return_value = _mock_session_with_response(response)
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url == "http://84ee8c30-psegli-automation:8099"
@@ -108,8 +105,8 @@ async def test_supervisor_discovery_uses_hostname_with_ports_mapping():
         }
     )
 
-    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value = _mock_client_session(response)
+    with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+        mock_get_session.return_value = _mock_session_with_response(response)
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url == "http://84ee8c30-psegli-automation:8000"
@@ -131,8 +128,8 @@ async def test_supervisor_discovery_normalizes_scheme_host_url():
         }
     )
 
-    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value = _mock_client_session(response)
+    with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+        mock_get_session.return_value = _mock_session_with_response(response)
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url == "http://84ee8c30-psegli-automation:8000"
@@ -159,11 +156,11 @@ async def test_supervisor_discovery_accepts_supervisor_env_without_scheme():
         {"SUPERVISOR": "172.30.32.2"},
         clear=True,
     ):
-        with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-            mock_cs.return_value = _mock_client_session(response)
+        with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+            mock_get_session.return_value = _mock_session_with_response(response)
             await async_get_addon_url_from_supervisor(MagicMock())
 
-    session = mock_cs.return_value.__aenter__.return_value
+    session = mock_get_session.return_value
     session.get.assert_called_once()
     called_url = session.get.call_args.args[0]
     assert called_url.startswith("http://172.30.32.2/")
@@ -176,8 +173,8 @@ async def test_supervisor_discovery_returns_none_on_non_200():
     response.status = 404
     response.json = AsyncMock(return_value={"message": "not found"})
 
-    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value = _mock_client_session(response)
+    with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+        mock_get_session.return_value = _mock_session_with_response(response)
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url is None
@@ -186,15 +183,11 @@ async def test_supervisor_discovery_returns_none_on_non_200():
 @pytest.mark.asyncio
 async def test_supervisor_discovery_returns_none_on_timeout():
     """Discovery returns None when Supervisor call times out."""
-    session = AsyncMock()
+    session = MagicMock()
     session.get = MagicMock(side_effect=asyncio.TimeoutError())
-    cm = AsyncMock(
-        __aenter__=AsyncMock(return_value=session),
-        __aexit__=AsyncMock(return_value=False),
-    )
 
-    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
-        mock_cs.return_value = cm
+    with patch("custom_components.psegli.supervisor.async_get_clientsession") as mock_get_session:
+        mock_get_session.return_value = session
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url is None

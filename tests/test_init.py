@@ -37,7 +37,7 @@ from custom_components.psegli import (
     _ADDON_CIRCUIT_OPEN_UNTIL,
     _ADDON_CIRCUIT_OPEN_FOR_URL,
     _LAST_ADDON_UNREACHABLE_NOTIFICATION_AT,
-    _OPTION_ADDON_URL_AUTO,
+    OPTION_ADDON_URL_AUTO,
 )
 from custom_components.psegli.auto_login import (
     LoginResult,
@@ -918,7 +918,7 @@ class TestSignalTracking:
         ]
         assert option_updates
         assert option_updates[-1].kwargs["options"][CONF_ADDON_URL] == discovered_url
-        assert option_updates[-1].kwargs["options"][_OPTION_ADDON_URL_AUTO] is True
+        assert option_updates[-1].kwargs["options"][OPTION_ADDON_URL_AUTO] is True
 
     @patch("custom_components.psegli.async_get_addon_url_from_supervisor", new_callable=AsyncMock)
     @patch("custom_components.psegli.PSEGLIClient")
@@ -938,7 +938,7 @@ class TestSignalTracking:
         refreshed_url = "http://84ee8c30-psegli-automation-new:8000"
         mock_config_entry.options = {
             CONF_ADDON_URL: learned_url,
-            _OPTION_ADDON_URL_AUTO: True,
+            OPTION_ADDON_URL_AUTO: True,
         }
         mock_supervisor.return_value = refreshed_url
         mock_health.return_value = True
