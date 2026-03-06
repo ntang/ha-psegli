@@ -288,6 +288,7 @@ class TestGetFreshCookiesRetry:
         )
 
         assert result.cookies == "MM_SID=abc; __RequestVerificationToken=xyz"
+        assert result.addon_url == "http://84ee8c30-psegli-automation:8000"
         assert seen_urls[0] == "http://localhost:8000"
         assert any("psegli-automation" in url for url in seen_urls[1:])
         assert mock_sleep.call_count == 1

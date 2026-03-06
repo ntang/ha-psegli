@@ -280,6 +280,30 @@ class TestPSEGLIOptionsFlow:
         )
 
     @patch("custom_components.psegli.config_flow.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_options_promotes_discovered_working_addon_url(
+        self, mock_client_cls, mock_fresh, mock_hass, mock_config_entry
+    ):
+        """If fallback URL succeeds, options should persist discovered URL."""
+        provided_url = "http://localhost:8000"
+        discovered_url = "http://84ee8c30-psegli-automation:8000"
+        mock_fresh.return_value = LoginResult(
+            cookies="MM_SID=addon_refreshed",
+            addon_url=discovered_url,
+        )
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client_cls.return_value = mock_client
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init(
+            {CONF_COOKIE: "", CONF_ADDON_URL: provided_url}
+        )
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_ADDON_URL] == discovered_url
+
+    @patch("custom_components.psegli.config_flow.get_fresh_cookies", new_callable=AsyncMock)
     async def test_options_no_cookie_captcha_still_saves_options(
         self, mock_fresh, mock_hass, mock_config_entry
     ):

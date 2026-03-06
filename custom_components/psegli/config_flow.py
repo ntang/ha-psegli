@@ -84,6 +84,12 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         elif login_result.cookies:
                             cookie = login_result.cookies
                             _LOGGER.debug("Successfully obtained fresh cookies from addon")
+                            if login_result.addon_url:
+                                addon_url = _normalize_addon_url(login_result.addon_url)
+                                _LOGGER.info(
+                                    "Using discovered reachable addon URL during setup: %s",
+                                    addon_url,
+                                )
                         else:
                             _LOGGER.warning(
                                 "Addon failed to get cookies (category: %s, url=%s)",
@@ -206,6 +212,16 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                             password,
                             addon_url=addon_url,
                         )
+                        if login_result.addon_url:
+                            discovered_url = _normalize_addon_url(login_result.addon_url)
+                            if discovered_url != addon_url:
+                                _LOGGER.info(
+                                    "Promoting discovered reachable addon URL in options: %s -> %s",
+                                    addon_url,
+                                    discovered_url,
+                                )
+                            addon_url = discovered_url
+                            options_data[CONF_ADDON_URL] = addon_url
 
                         if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
                             _LOGGER.warning(

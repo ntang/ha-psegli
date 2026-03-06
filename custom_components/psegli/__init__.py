@@ -164,6 +164,32 @@ def _get_addon_url(entry: ConfigEntry | None) -> str:
             return str(data_url).rstrip("/")
     return DEFAULT_ADDON_URL.rstrip("/")
 
+
+def _persist_discovered_addon_url(
+    hass: HomeAssistant,
+    entry: ConfigEntry | None,
+    discovered_url: str | None,
+    context: str,
+) -> None:
+    """Persist reachable addon URL in options when it differs from current setting."""
+    if not entry or not discovered_url:
+        return
+
+    normalized = str(discovered_url).rstrip("/")
+    current = _get_addon_url(entry)
+    if normalized == current:
+        return
+
+    updated_options = {**entry.options, CONF_ADDON_URL: normalized}
+    hass.config_entries.async_update_entry(entry, options=updated_options)
+    _LOGGER.info(
+        "Updated addon URL from %s to %s based on successful %s probe",
+        current,
+        normalized,
+        context,
+    )
+
+
 async def get_last_cumulative_kwh(hass: HomeAssistant, statistic_id: str) -> float:
     """Get the last recorded cumulative kWh for a given statistic_id.
 
@@ -215,6 +241,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 username,
                 password,
                 addon_url=addon_url,
+            )
+            _persist_discovered_addon_url(
+                hass,
+                entry,
+                login_result.addon_url,
+                "setup",
             )
 
             if login_result.cookies:
@@ -425,6 +457,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             username,
             password,
             addon_url=addon_url,
+        )
+        _persist_discovered_addon_url(
+            hass,
+            active_entry,
+            login_result.addon_url,
+            f"refresh ({trigger_reason})",
         )
         if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
             _LOGGER.warning(

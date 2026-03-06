@@ -33,6 +33,7 @@ class LoginResult:
 
     cookies: Optional[str] = None
     category: Optional[str] = None  # one of CATEGORY_* constants on failure
+    addon_url: Optional[str] = None  # endpoint that returned a non-transport response
 
 # Retry configuration for transport failures (connection error, timeout, disconnect).
 # Terminal responses (captcha_required, invalid credentials) are never retried.
@@ -157,18 +158,24 @@ async def _attempt_login(
             result = await resp.json()
             if result.get("success") and result.get("cookies"):
                 logger.debug("Successfully obtained cookies from addon")
-                return LoginResult(cookies=result["cookies"])
+                return LoginResult(cookies=result["cookies"], addon_url=base_url)
             if result.get("captcha_required"):
                 logger.info(
                     "reCAPTCHA challenge triggered — retry usually resolves it"
                 )
-                return LoginResult(category=CATEGORY_CAPTCHA_REQUIRED)
+                return LoginResult(
+                    category=CATEGORY_CAPTCHA_REQUIRED,
+                    addon_url=base_url,
+                )
             logger.error(
                 "Addon login failed: url=%s error=%s",
                 login_url,
                 result.get("error", "Unknown error"),
             )
-            return LoginResult(category=CATEGORY_INVALID_CREDENTIALS)
+            return LoginResult(
+                category=CATEGORY_INVALID_CREDENTIALS,
+                addon_url=base_url,
+            )
         elif resp.status >= 500:
             # Server errors are transient — raise so the retry loop catches it.
             raise aiohttp.ClientResponseError(
@@ -184,7 +191,7 @@ async def _attempt_login(
                 login_url,
                 resp.status,
             )
-            return LoginResult(category=CATEGORY_UNKNOWN_ERROR)
+            return LoginResult(category=CATEGORY_UNKNOWN_ERROR, addon_url=base_url)
 
 
 async def get_fresh_cookies(
@@ -242,6 +249,8 @@ async def get_fresh_cookies(
                     login_data,
                     addon_url=attempt_url,
                 )
+            if not result.addon_url:
+                result.addon_url = attempt_url
             # Any non-exception return is a functional response — don't retry.
             return result
 
@@ -299,4 +308,7 @@ async def get_fresh_cookies(
         last_transport_error,
         type(last_transport_error).__name__ if last_transport_error else "Unknown",
     )
-    return LoginResult(category=CATEGORY_ADDON_DISCONNECT)
+    return LoginResult(
+        category=CATEGORY_ADDON_DISCONNECT,
+        addon_url=None,
+    )

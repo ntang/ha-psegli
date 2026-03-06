@@ -33,6 +33,7 @@ from custom_components.psegli.const import (
     CONF_COOKIE,
     CONF_USERNAME,
     CONF_PASSWORD,
+    CONF_ADDON_URL,
     CONF_DIAGNOSTIC_LEVEL,
     CONF_NOTIFICATION_LEVEL,
     DIAGNOSTIC_VERBOSE,
@@ -772,6 +773,38 @@ class TestSignalTracking:
             mock_config_entry.data[CONF_PASSWORD],
             addon_url=custom_url,
         )
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_refresh_promotes_discovered_working_addon_url(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Refresh should persist a discovered working addon URL into options."""
+        provided_url = "http://localhost:8000"
+        discovered_url = "http://84ee8c30-psegli-automation:8000"
+        mock_config_entry.options = {CONF_ADDON_URL: provided_url}
+        mock_health.return_value = True
+        mock_fresh.return_value = LoginResult(
+            cookies="MM_SID=fresh_cookie",
+            addon_url=discovered_url,
+        )
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
+        option_updates = [
+            c for c in mock_hass.config_entries.async_update_entry.call_args_list
+            if "options" in c.kwargs
+        ]
+        assert option_updates
+        assert option_updates[-1].kwargs["options"][CONF_ADDON_URL] == discovered_url
 
     @patch("custom_components.psegli.PSEGLIClient")
     @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
