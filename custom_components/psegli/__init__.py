@@ -765,7 +765,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "notification_id": "psegli_captcha_required",
                 },
             )
-            await _schedule_captcha_retry(trigger_reason)
+            if trigger_reason.startswith("captcha_auto_retry_"):
+                _LOGGER.info(
+                    "[refresh:%s] CAPTCHA still required on %s; continuing current retry loop",
+                    attempt_id,
+                    trigger_reason,
+                )
+            else:
+                await _schedule_captcha_retry(trigger_reason)
             return False
 
         if not login_result.cookies:
@@ -834,6 +841,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             data={**active_entry.data, CONF_COOKIE: cookies},
         )
 
+        await _cancel_captcha_retry_task("cookie refresh success")
         _reset_addon_transport_state("cookie refresh success")
         _record_cookie_obtained(hass)
         _reset_auth_failure_counter("cookie refresh success")
@@ -949,16 +957,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         task = asyncio.create_task(_delayed_refresh())
         domain_data[_PENDING_AUTH_REFRESH_TASK] = task
 
+    async def _cancel_captcha_retry_task(reason: str) -> None:
+        """Cancel a pending CAPTCHA retry task, if one exists."""
+        existing = domain_data.get(_CAPTCHA_RETRY_TASK)
+        if not existing:
+            domain_data[_CAPTCHA_RETRY_TASK] = None
+            return
+        if existing.done():
+            domain_data[_CAPTCHA_RETRY_TASK] = None
+            return
+        if existing is asyncio.current_task():
+            # Never await/cancel the currently running retry task.
+            domain_data[_CAPTCHA_RETRY_TASK] = None
+            return
+
+        existing.cancel()
+        try:
+            await existing
+        except asyncio.CancelledError:
+            _LOGGER.debug("CAPTCHA retry task cancelled (%s)", reason)
+        finally:
+            if domain_data.get(_CAPTCHA_RETRY_TASK) is existing:
+                domain_data[_CAPTCHA_RETRY_TASK] = None
+
     async def _schedule_captcha_retry(trigger_reason: str) -> None:
         """Schedule delayed CAPTCHA auto-retries after a CAPTCHA failure."""
         # Cancel any existing CAPTCHA retry task
         existing = domain_data.get(_CAPTCHA_RETRY_TASK)
         if existing and not existing.done():
-            existing.cancel()
-            try:
-                await existing
-            except asyncio.CancelledError:
-                pass
+            if existing is asyncio.current_task():
+                _LOGGER.debug(
+                    "CAPTCHA retry reschedule requested from active retry loop; keeping current task"
+                )
+                return
+            await _cancel_captcha_retry_task(f"rescheduled by {trigger_reason}")
 
         async def _captcha_retry_loop() -> None:
             try:
@@ -1158,12 +1190,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             "Cookie age (%s) exceeds proactive threshold (%sh), refreshing",
                             cookie_age, max_age_hours,
                         )
-                        await _refresh_cookie_shared(
+                        proactive_ok = await _refresh_cookie_shared(
                             trigger_reason="proactive_age",
                             notify_on_success=False,
                             notify_on_failure=False,
                         )
-                        return
+                        if proactive_ok:
+                            return
+                        _LOGGER.debug(
+                            "Proactive refresh failed; continuing with standard auth probe path"
+                        )
 
             # If we have a cookie, test it first — skip refresh if still valid
             if cookie and active_entry.entry_id in hass.data.get(DOMAIN, {}):

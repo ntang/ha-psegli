@@ -217,6 +217,10 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                 manual_url_override = (
                     CONF_ADDON_URL in user_input and addon_url != current_addon_url
                 )
+                current_proactive_max_age = self.config_entry.options.get(
+                    CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+                    DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+                )
 
                 # Always persist observability options
                 options_data = {
@@ -230,7 +234,7 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                     ),
                     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: user_input.get(
                         CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
-                        DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+                        current_proactive_max_age,
                     ),
                 }
                 if manual_url_override:

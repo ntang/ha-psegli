@@ -315,6 +315,20 @@ class TestPSEGAutoLogin:
         assert result is True
         assert call_count == 2
 
+    def test_rotate_profile_dir_missing_path_does_not_record_created(self, tmp_path):
+        """Missing profile directory should not mark a profile as newly created."""
+        login = PSEGAutoLogin(
+            email="test@example.com",
+            password="testpass",
+            profile_dir=str(tmp_path / "missing-profile"),
+        )
+        assert not os.path.isdir(login.profile_dir)
+
+        with patch("auto_login.record_profile_created") as mock_record_created:
+            login._rotate_profile_dir()
+
+        mock_record_created.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_setup_browser_retries_without_rotation_on_non_corruption_error(
         self, mock_playwright, tmp_path

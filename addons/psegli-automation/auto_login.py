@@ -140,7 +140,10 @@ class PSEGAutoLogin:
     def _rotate_profile_dir(self) -> None:
         """On corruption: rename current profile dir and record fresh profile."""
         if not os.path.isdir(self.profile_dir):
-            record_profile_created()
+            _LOGGER.debug(
+                "Profile rotation requested but profile dir does not exist: %s",
+                self.profile_dir,
+            )
             return
         try:
             stamp = int(time.time())

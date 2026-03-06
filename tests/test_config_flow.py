@@ -547,6 +547,24 @@ class TestPSEGLIOptionsFlow:
         assert result["type"] == "create_entry"
         assert result["data"][CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS] == DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS
 
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_options_omitted_proactive_refresh_preserves_existing_value(
+        self, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """If omitted, proactive refresh should retain the current saved option."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client_cls.return_value = mock_client
+        mock_config_entry.options = {CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: 8}
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init({
+            CONF_COOKIE: "MM_SID=new",
+        })
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS] == 8
+
     async def test_options_prefills_proactive_refresh_from_existing(self, mock_hass, mock_config_entry):
         """Options schema prefills proactive refresh hours from existing options."""
         mock_config_entry.options = {CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: 8}

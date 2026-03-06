@@ -1,6 +1,7 @@
 """Tests for __init__.py integration lifecycle."""
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1306,6 +1307,76 @@ class TestSignalTracking:
         retry_task = domain_data.get(_CAPTCHA_RETRY_TASK)
         assert retry_task is None or retry_task.done()
 
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_captcha_auto_retry_does_not_spawn_nested_retry_task(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """A CAPTCHA result during auto-retry should not schedule a second retry loop."""
+        mock_health.return_value = True
+        mock_fresh.side_effect = [
+            LoginResult(cookies=None, category=CATEGORY_CAPTCHA_REQUIRED),
+            LoginResult(cookies=None, category=CATEGORY_CAPTCHA_REQUIRED),
+            LoginResult(cookies="MM_SID=unexpected", addon_url="http://localhost:8000"),
+        ]
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        with (
+            patch("custom_components.psegli.CAPTCHA_AUTO_RETRY_COUNT", 1),
+            patch("custom_components.psegli.CAPTCHA_AUTO_RETRY_DELAYS_MINUTES", [0]),
+            patch("custom_components.psegli.asyncio.sleep", new=AsyncMock(return_value=None)),
+        ):
+            await async_setup_entry(mock_hass, mock_config_entry)
+            handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+            await handler(MagicMock(data={}))
+
+            domain_data = mock_hass.data[DOMAIN]
+            retry_task = domain_data.get(_CAPTCHA_RETRY_TASK)
+            assert retry_task is not None
+            with suppress(asyncio.CancelledError):
+                await asyncio.wait_for(retry_task, timeout=1)
+
+        assert mock_fresh.call_count == 2
+        assert mock_hass.data[DOMAIN].get(_CAPTCHA_RETRY_TASK) is None
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_successful_refresh_cancels_pending_captcha_retry(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Manual refresh success should cancel any pending delayed CAPTCHA retry task."""
+        mock_health.return_value = True
+        mock_fresh.side_effect = [
+            LoginResult(cookies=None, category=CATEGORY_CAPTCHA_REQUIRED),
+            LoginResult(cookies="MM_SID=fresh_cookie", addon_url="http://localhost:8000"),
+        ]
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+        first_retry_task = mock_hass.data[DOMAIN].get(_CAPTCHA_RETRY_TASK)
+        assert first_retry_task is not None
+        assert not first_retry_task.done()
+
+        await handler(MagicMock(data={}))
+
+        assert mock_hass.data[DOMAIN].get(_CAPTCHA_RETRY_TASK) is None
+        if first_retry_task and not first_retry_task.done():
+            first_retry_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await first_retry_task
+
 
 class TestProcessChartDataSignals:
     """Tests for _process_chart_data signal tracking."""
@@ -1506,6 +1577,61 @@ class TestProactiveRefreshAndExpiryWarning:
         cookie_age = datetime.now(tz=timezone.utc) - obtained_at
         assert cookie_age >= warning_age
         assert cookie_age < max_age
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_proactive_refresh_failure_continues_with_auth_probe(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """If proactive refresh fails, scheduler should still run the auth probe path."""
+        mock_health.return_value = False
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.test_data_path = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client.get_usage_data = MagicMock(return_value={"chart_data": {}})
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_config_entry.options = {CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: 1}
+
+        captured = {}
+
+        def _capture_scheduled_task(_hass, coro, _name, eager_start=True):
+            captured["coro"] = coro
+            task = MagicMock()
+            task.done.return_value = False
+            task.cancel = MagicMock()
+            return task
+
+        mock_config_entry.async_create_background_task = MagicMock(
+            side_effect=_capture_scheduled_task
+        )
+
+        result = await async_setup_entry(mock_hass, mock_config_entry)
+        assert result is True
+        assert "coro" in captured
+
+        from custom_components.psegli import _COOKIE_OBTAINED_AT
+
+        mock_hass.data[DOMAIN][_COOKIE_OBTAINED_AT] = (
+            datetime.now(tz=timezone.utc) - timedelta(hours=2)
+        )
+
+        sleep_calls = 0
+
+        async def _sleep_once_then_cancel(_seconds):
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 1:
+                return None
+            raise asyncio.CancelledError
+
+        with patch("custom_components.psegli.asyncio.sleep", side_effect=_sleep_once_then_cancel):
+            await captured["coro"]
+
+        assert mock_health.call_count == 1
+        mock_client.test_data_path.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
