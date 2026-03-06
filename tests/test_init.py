@@ -1,7 +1,7 @@
 """Tests for __init__.py integration lifecycle."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +21,8 @@ from custom_components.psegli import (
     _SIGNAL_LAST_REFRESH_FAILURE_CATEGORY,
     _SIGNAL_LAST_SUCCESSFUL_UPDATE_AT,
     _SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT,
+    _ADDON_TRANSPORT_FAILURE_COUNT,
+    _ADDON_CIRCUIT_OPEN_UNTIL,
 )
 from custom_components.psegli.auto_login import (
     LoginResult,
@@ -774,6 +776,74 @@ class TestSignalTracking:
             addon_url=custom_url,
         )
 
+    @patch("custom_components.psegli.async_get_addon_url_from_supervisor", new_callable=AsyncMock)
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_refresh_uses_supervisor_discovered_url_when_unconfigured(
+        self,
+        mock_health,
+        mock_fresh,
+        mock_client_cls,
+        mock_supervisor,
+        mock_hass,
+        mock_config_entry,
+    ):
+        """With default URL config, refresh should prefer Supervisor-discovered URL."""
+        discovered_url = "http://84ee8c30-psegli-automation:8000"
+        mock_supervisor.return_value = discovered_url
+        mock_health.return_value = True
+        mock_fresh.return_value = LoginResult(cookies="MM_SID=fresh_cookie")
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
+        mock_supervisor.assert_awaited()
+        mock_health.assert_called_with(discovered_url)
+        mock_fresh.assert_called_with(
+            mock_config_entry.data[CONF_USERNAME],
+            mock_config_entry.data[CONF_PASSWORD],
+            addon_url=discovered_url,
+        )
+
+    @patch("custom_components.psegli.async_get_addon_url_from_supervisor", new_callable=AsyncMock)
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_refresh_custom_url_skips_supervisor_discovery(
+        self,
+        mock_health,
+        mock_fresh,
+        mock_client_cls,
+        mock_supervisor,
+        mock_hass,
+        mock_config_entry,
+    ):
+        """Custom configured addon URL should bypass Supervisor discovery."""
+        custom_url = "http://addon.example:8000"
+        mock_config_entry.options = {CONF_ADDON_URL: custom_url}
+        mock_supervisor.return_value = "http://ignored:8000"
+        mock_health.return_value = True
+        mock_fresh.return_value = LoginResult(cookies="MM_SID=fresh_cookie")
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
+        mock_supervisor.assert_not_awaited()
+        mock_health.assert_called_with(custom_url)
+
     @patch("custom_components.psegli.PSEGLIClient")
     @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
     @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
@@ -833,6 +903,70 @@ class TestSignalTracking:
 
     @patch("custom_components.psegli.PSEGLIClient")
     @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock, return_value=False)
+    async def test_addon_circuit_breaker_opens_after_repeated_unreachable(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """After threshold failures, refresh short-circuits with open circuit."""
+        custom_url = "http://addon.example:8000"
+        mock_config_entry.options = {CONF_ADDON_URL: custom_url}
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+
+        await handler(MagicMock(data={}))
+        await handler(MagicMock(data={}))
+        await handler(MagicMock(data={}))
+        await handler(MagicMock(data={}))
+
+        assert mock_health.call_count == 3
+        assert mock_hass.data[DOMAIN][_ADDON_TRANSPORT_FAILURE_COUNT] == 3
+        assert isinstance(mock_hass.data[DOMAIN][_ADDON_CIRCUIT_OPEN_UNTIL], datetime)
+
+        notifications = [
+            call
+            for call in mock_hass.services.async_call.call_args_list
+            if call.args[0] == "persistent_notification"
+            and call.args[1] == "create"
+            and call.args[2].get("notification_id") == "psegli_addon_unreachable"
+        ]
+        assert len(notifications) == 1
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_addon_circuit_breaker_resets_after_success(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Transport failure counter/circuit should clear after successful refresh."""
+        custom_url = "http://addon.example:8000"
+        mock_config_entry.options = {CONF_ADDON_URL: custom_url}
+        mock_health.side_effect = [False, False, True]
+        mock_fresh.return_value = LoginResult(cookies="MM_SID=fresh_cookie")
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+
+        await handler(MagicMock(data={}))
+        await handler(MagicMock(data={}))
+        await handler(MagicMock(data={}))
+
+        assert mock_health.call_count == 3
+        assert mock_hass.data[DOMAIN][_ADDON_TRANSPORT_FAILURE_COUNT] == 0
+        assert _ADDON_CIRCUIT_OPEN_UNTIL not in mock_hass.data[DOMAIN]
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
     @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
     async def test_get_status_service_registered(
         self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
@@ -880,6 +1014,9 @@ class TestSignalTracking:
             "last_successful_update_at",
             "last_successful_datapoint_at",
             "cookie_age_seconds",
+            "addon_transport_failure_count",
+            "addon_circuit_open_until",
+            "last_working_addon_url",
         }
         assert set(result.keys()) == expected_keys
         # Cookie age should be computed since we recorded it during setup

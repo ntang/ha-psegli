@@ -18,4 +18,5 @@ NOTIFICATION_CRITICAL_ONLY = "critical_only"
 NOTIFICATION_VERBOSE = "verbose"
 
 # Addon configuration
+ADDON_SLUG = "psegli-automation"
 DEFAULT_ADDON_URL = "http://localhost:8000"
