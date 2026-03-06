@@ -19,6 +19,8 @@ from custom_components.psegli.const import (
     DEFAULT_ADDON_URL,
     CONF_DIAGNOSTIC_LEVEL,
     CONF_NOTIFICATION_LEVEL,
+    CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+    DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     DIAGNOSTIC_STANDARD,
     NOTIFICATION_CRITICAL_ONLY,
 )
@@ -413,3 +415,57 @@ class TestPSEGLIOptionsFlow:
         schema = result["data_schema"]
         key = next(k for k in schema.schema if str(k) == CONF_ADDON_URL)
         assert key.default() == DEFAULT_ADDON_URL
+
+    async def test_options_schema_includes_proactive_refresh(self, mock_hass, mock_config_entry):
+        """Options schema includes proactive_refresh_max_age_hours with correct default."""
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init(None)
+        schema = result["data_schema"]
+        schema_keys = [str(k) for k in schema.schema]
+        assert CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS in schema_keys
+        key = next(k for k in schema.schema if str(k) == CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS)
+        assert key.default() == DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS
+
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_options_persists_proactive_refresh_hours(
+        self, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Proactive refresh hours value is persisted in options data."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client_cls.return_value = mock_client
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init({
+            CONF_COOKIE: "MM_SID=new",
+            CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: 12,
+        })
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS] == 12
+
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_options_defaults_proactive_refresh_when_not_provided(
+        self, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Proactive refresh defaults to DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS when not submitted."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client_cls.return_value = mock_client
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init({
+            CONF_COOKIE: "MM_SID=new",
+        })
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS] == DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS
+
+    async def test_options_prefills_proactive_refresh_from_existing(self, mock_hass, mock_config_entry):
+        """Options schema prefills proactive refresh hours from existing options."""
+        mock_config_entry.options = {CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: 8}
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init(None)
+        schema = result["data_schema"]
+        key = next(k for k in schema.schema if str(k) == CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS)
+        assert key.default() == 8

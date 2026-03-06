@@ -15,6 +15,8 @@ from .const import (
     DEFAULT_ADDON_URL,
     CONF_DIAGNOSTIC_LEVEL,
     CONF_NOTIFICATION_LEVEL,
+    CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+    DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     DIAGNOSTIC_STANDARD,
     DIAGNOSTIC_VERBOSE,
     NOTIFICATION_CRITICAL_ONLY,
@@ -179,6 +181,10 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                     CONF_NOTIFICATION_LEVEL: user_input.get(
                         CONF_NOTIFICATION_LEVEL, NOTIFICATION_CRITICAL_ONLY
                     ),
+                    CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: user_input.get(
+                        CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+                        DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+                    ),
                 }
 
                 # If user provided a new cookie, validate it
@@ -285,6 +291,10 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                 self.config_entry.data.get(CONF_ADDON_URL),
             )
         )
+        current_refresh_hours = self.config_entry.options.get(
+            CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+            DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -292,6 +302,7 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                 current_diag,
                 current_notif,
                 current_addon_url,
+                current_refresh_hours,
             ),
             errors=errors,
             description_placeholders={
@@ -304,11 +315,16 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
         current_diag: str = DIAGNOSTIC_STANDARD,
         current_notif: str = NOTIFICATION_CRITICAL_ONLY,
         current_addon_url: str = DEFAULT_ADDON_URL,
+        current_refresh_hours: int = DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     ):
         """Return the schema for the options flow."""
         return vol.Schema({
             vol.Optional(CONF_COOKIE, description="Leave empty to attempt automatic refresh via addon"): str,
             vol.Optional(CONF_ADDON_URL, default=current_addon_url): str,
+            vol.Optional(
+                CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+                default=current_refresh_hours,
+            ): vol.All(vol.Coerce(int), vol.Range(min=0, max=168)),
             vol.Optional(
                 CONF_DIAGNOSTIC_LEVEL,
                 default=current_diag,
