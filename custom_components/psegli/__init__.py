@@ -75,6 +75,7 @@ _SUPERVISOR_DISCOVERY_TTL = timedelta(seconds=60)
 # Add-on transport circuit breaker state
 _ADDON_TRANSPORT_FAILURE_COUNT = "_addon_transport_failure_count"
 _ADDON_CIRCUIT_OPEN_UNTIL = "_addon_circuit_open_until"
+_ADDON_CIRCUIT_OPEN_FOR_URL = "_addon_circuit_open_for_url"
 _LAST_ADDON_UNREACHABLE_NOTIFICATION_AT = "_last_addon_unreachable_notification_at"
 _LAST_WORKING_ADDON_URL = "_last_working_addon_url"
 _ADDON_CIRCUIT_OPEN_THRESHOLD = 3
@@ -293,14 +294,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     username = entry.data.get(CONF_USERNAME)
     password = entry.data.get(CONF_PASSWORD)
     cookie = entry.data.get(CONF_COOKIE, "")
-    addon_url = await _get_addon_url(hass, entry)
-
     if not username or not password:
         _LOGGER.error("No username/password provided")
         return False
 
     # If no cookie available, try to get one from the addon
     if not cookie:
+        addon_url = await _get_addon_url(hass, entry)
         _LOGGER.info(
             "No cookie available, attempting addon login via %s",
             addon_url,
@@ -473,15 +473,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Reset add-on transport failure count and circuit state."""
         failures = domain_data.get(_ADDON_TRANSPORT_FAILURE_COUNT, 0)
         open_until = domain_data.get(_ADDON_CIRCUIT_OPEN_UNTIL)
+        open_for_url = domain_data.get(_ADDON_CIRCUIT_OPEN_FOR_URL)
         if failures or open_until:
             _LOGGER.info(
-                "Reset add-on transport state (%s): failures=%d open_until=%s",
+                "Reset add-on transport state (%s): failures=%d open_until=%s open_for_url=%s",
                 reason,
                 failures,
                 open_until.isoformat() if isinstance(open_until, datetime) else open_until,
+                open_for_url,
             )
         domain_data[_ADDON_TRANSPORT_FAILURE_COUNT] = 0
         domain_data.pop(_ADDON_CIRCUIT_OPEN_UNTIL, None)
+        domain_data.pop(_ADDON_CIRCUIT_OPEN_FOR_URL, None)
 
     async def _maybe_notify_addon_unreachable(
         addon_url: str,
@@ -545,10 +548,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             existing_open_until = domain_data.get(_ADDON_CIRCUIT_OPEN_UNTIL)
             if not isinstance(existing_open_until, datetime) or existing_open_until < proposed_open_until:
                 domain_data[_ADDON_CIRCUIT_OPEN_UNTIL] = proposed_open_until
+            domain_data[_ADDON_CIRCUIT_OPEN_FOR_URL] = addon_url
             _LOGGER.warning(
-                "Addon circuit opened after %d failures; suppressing probes until %s",
+                "Addon circuit opened after %d failures; suppressing probes until %s (url=%s)",
                 count,
                 domain_data[_ADDON_CIRCUIT_OPEN_UNTIL].isoformat(),
+                addon_url,
             )
 
         await _maybe_notify_addon_unreachable(addon_url, trigger_reason)
@@ -558,6 +563,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Return True when add-on transport circuit is open and still cooling down."""
         open_until = domain_data.get(_ADDON_CIRCUIT_OPEN_UNTIL)
         if not isinstance(open_until, datetime):
+            return False
+
+        open_for_url = domain_data.get(_ADDON_CIRCUIT_OPEN_FOR_URL)
+        if isinstance(open_for_url, str) and open_for_url and open_for_url != addon_url:
+            _LOGGER.info(
+                "Addon circuit reset due to URL change: was %s now %s (%s)",
+                open_for_url,
+                addon_url,
+                trigger_reason,
+            )
+            _reset_addon_transport_state("addon URL changed")
             return False
 
         now = datetime.now(tz=timezone.utc)
@@ -1361,6 +1377,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             domain_data.pop(_SUPERVISOR_DISCOVERED_ADDON_URL_AT, None)
             domain_data.pop(_ADDON_TRANSPORT_FAILURE_COUNT, None)
             domain_data.pop(_ADDON_CIRCUIT_OPEN_UNTIL, None)
+            domain_data.pop(_ADDON_CIRCUIT_OPEN_FOR_URL, None)
             domain_data.pop(_LAST_ADDON_UNREACHABLE_NOTIFICATION_AT, None)
             domain_data.pop(_LAST_WORKING_ADDON_URL, None)
 

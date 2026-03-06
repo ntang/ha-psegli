@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -35,9 +36,34 @@ def _extract_addon_url(payload: dict[str, Any]) -> str | None:
     host = network.get("host") or data.get("hostname")
     port = network.get("port") or data.get("port")
 
+    # Some Supervisor payloads expose ports as a mapping (e.g. {"8000/tcp": 8000}).
+    if not port and isinstance(network, dict):
+        for key, value in network.items():
+            if key in {"host", "hostname", "port"}:
+                continue
+            if isinstance(value, int):
+                port = value
+                break
+            if isinstance(value, str):
+                digits = "".join(ch for ch in value if ch.isdigit())
+                if digits:
+                    port = int(digits)
+                    break
+            if isinstance(key, str):
+                digits = "".join(ch for ch in key if ch.isdigit())
+                if digits:
+                    port = int(digits)
+                    break
+
     if not host:
         return None
     if isinstance(host, str) and host.startswith(("http://", "https://")):
+        parsed = urlparse(host)
+        if parsed.hostname:
+            target_port = parsed.port or port
+            if target_port:
+                return f"{parsed.scheme}://{parsed.hostname}:{target_port}".rstrip("/")
+            return f"{parsed.scheme}://{parsed.hostname}".rstrip("/")
         return host.rstrip("/")
     if port:
         return f"http://{host}:{port}".rstrip("/")
@@ -77,4 +103,3 @@ async def async_get_addon_url_from_supervisor(hass: HomeAssistant) -> str | None
     except Exception as err:  # pragma: no cover - defensive
         _LOGGER.debug("Unexpected Supervisor discovery error: %s", err)
         return None
-
