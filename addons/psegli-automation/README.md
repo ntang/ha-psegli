@@ -2,7 +2,7 @@
 
 This Home Assistant addon provides automated login services for PSEG Long Island using Playwright. It runs in its own container and exposes a web API for cookie generation.
 
-**Version**: 2.5.1
+**Version**: 2.5.1.1
 
 ## Features
 

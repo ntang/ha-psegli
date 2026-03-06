@@ -100,7 +100,7 @@ Scheduled (:00/:30):
 Use:
 
 ```bash
-python3 scripts/sync_version.py --set <MAJOR.MINOR.PATCH>
+python3 scripts/sync_version.py --set <MAJOR.MINOR.PATCH[.HOTFIX]>
 ```
 
 This updates all required hard-coded version fields (`manifest.json`,

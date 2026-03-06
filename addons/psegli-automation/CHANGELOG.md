@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.5.1.1
+
+- Add add-on debug logging toggle in Home Assistant add-on Configuration UI (`debug: bool`), with runtime log-level control in the add-on process
+- Add configurable automation add-on base URL (`addon_url`) in integration setup/options flow
+  - Use configured URL for add-on health checks and `/login` refresh calls
+  - Persist URL with options precedence over entry data and default fallback
+- Expand add-on connectivity diagnostics with explicit request URL/status and exception class in logs
+- Fix refresh observability signals on unexpected refresh exceptions so status reports `failed` with fallback category `unknown_runtime_error`
+
 ## 2.5.1
 
 - Add retry with jittered backoff for add-on `/login` transport failures (connection error, timeout, server disconnected)
