@@ -51,6 +51,26 @@ Rationale: establish deterministic connectivity first, then recovery behavior, t
 
 ---
 
+## Initial Implementation Defaults (v1)
+
+These are execution defaults so implementation work can proceed without re-litigating constants:
+
+- **Supervisor discovery cache TTL:** `60s` in `hass.data[DOMAIN]`.
+- **Circuit breaker open threshold (N):** `3` consecutive transport failures.
+- **Circuit breaker open duration (M):** `10 minutes`.
+- **Half-open probes:** `1` probe; close on success, re-open on failure.
+- **CAPTCHA auto-retry count:** `2` retries.
+- **CAPTCHA auto-retry delays:** `[5, 15]` minutes.
+- **First-start grace retries:** `2` retries with `15s` delay.
+- **Proactive refresh max age:** `20h` (0 disables).
+- **Expiry warning threshold:** `80%` of observed/assumed cookie lifetime.
+- **Auto-backfill trigger:** `24h` datapoint gap.
+- **Max auto-backfill window:** `30 days`.
+
+These values should be constants/options with tests and can be tuned after telemetry.
+
+---
+
 ## Phase A — Supervisor Discovery + URL Canonicalization
 
 ### Objective
@@ -66,6 +86,7 @@ Automatically resolve the add-on URL from Supervisor when available and normaliz
   - precedence: explicit options URL > explicit data URL > Supervisor discovered URL > default.
 - Keep current learned URL promotion behavior.
 - Cache discovered Supervisor URL for a short TTL in `hass.data[DOMAIN]`.
+  - **Important scope:** cache is only to avoid repeated Supervisor API calls in-cycle; persistent URL learning remains owned by existing runtime auto-promotion.
 
 ### Tests
 
@@ -253,6 +274,47 @@ Defer implementation. Draft RFC only after telemetry from Phases D–F.
 - **Retry paths remain bounded.**
 - **Every phase ships with tests and explicit rollback behavior.**
 - **Stable lane (`requirements-dev.txt`) remains release gate.**
+
+---
+
+## Parallel Execution Map
+
+Phases that can run in parallel after prerequisites:
+
+- **Wave 1 (sequential prerequisite):** `Phase A` should land first to stabilize URL resolution contract.
+- **Wave 2 (parallel after A):**
+  - `Phase B` (breaker/notifications)
+  - `Phase C` (CAPTCHA auto-retry + first-start grace)
+  - `Phase D` (add-on profile-status + warm-up)
+- **Wave 3 (parallel after C + D):**
+  - `Phase E` (proactive refresh/expiry warning)
+  - `Phase F` (incremental fetch/backfill)
+- **Wave 4 (after A–F):**
+  - `Phase G` (guided setup UX)
+- **Wave 5 (optional):**
+  - `Phase H` RFC only
+
+Parallelization constraints:
+
+- `Phase D` defines `/profile-status` contract consumed by `Phase E/G`.
+- `Phase B` breaker state must be compatible with `Phase C/E` schedulers.
+- `Phase F` should reuse existing signal semantics (`last_successful_datapoint_at`) and not fork data-path logic.
+
+---
+
+## Implementation Notes for Executors
+
+To reduce ambiguity when coding, use these concrete contracts:
+
+- `custom_components/psegli/supervisor.py`
+  - `async_get_addon_url_from_supervisor(hass) -> str | None`
+- `custom_components/psegli/auto_login.py`
+  - keep `LoginResult.addon_url` semantics: non-transport responses carry URL; full disconnect returns `None`.
+  - candidate ordering remains deterministic and deduped.
+- `custom_components/psegli/__init__.py`
+  - keep `_get_addon_url` precedence: `options > data > supervisor > default`.
+  - only persist discovered URL when it differs and user has not set a conflicting custom URL.
+- `hass.data[DOMAIN]` keys added in this plan should be prefixed consistently and cleaned/reset on unload where needed.
 
 ---
 
