@@ -1020,3 +1020,39 @@ class TestProcessChartDataSignals:
         await _process_chart_data(mock_hass, chart_data)
 
         assert _SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT not in mock_hass.data[DOMAIN]
+
+
+# ---------------------------------------------------------------------------
+# First-start grace retries (Phase C)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("custom_components.psegli.PSEGLIClient")
+@patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+async def test_setup_first_start_grace_retries_on_addon_failure(
+    mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+):
+    """Setup should retry with grace delays when addon fails transiently."""
+    mock_fresh.side_effect = [
+        LoginResult(category="addon_disconnect"),
+        LoginResult(category="addon_disconnect"),
+        LoginResult(cookies="MM_SID=fresh_cookie", addon_url="http://localhost:8000"),
+    ]
+    mock_client = MagicMock()
+    mock_client.test_connection = MagicMock(return_value=True)
+    mock_client.cookie = "MM_SID=fresh_cookie"
+    mock_client_cls.return_value = mock_client
+    mock_config_entry.data = {
+        CONF_USERNAME: "user@example.com",
+        CONF_PASSWORD: "password123",
+        CONF_COOKIE: "",
+    }
+    mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+    with patch("custom_components.psegli.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        result = await async_setup_entry(mock_hass, mock_config_entry)
+
+    assert result is True
+    assert mock_fresh.call_count == 3
+    assert mock_sleep.call_count == 2

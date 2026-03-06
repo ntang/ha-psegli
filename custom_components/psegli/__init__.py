@@ -41,6 +41,8 @@ from .const import (
     DEFAULT_ADDON_URL,
     CAPTCHA_AUTO_RETRY_COUNT,
     CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    FIRST_START_GRACE_RETRIES,
+    FIRST_START_GRACE_DELAY_SECONDS,
 )
 from .psegli import InvalidAuth, PSEGLIClient, PSEGLIError
 from .auto_login import (
@@ -239,52 +241,69 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "No cookie available, attempting addon login via %s",
             addon_url,
         )
-        try:
-            login_result = await get_fresh_cookies(
-                username,
-                password,
-                addon_url=addon_url,
-            )
-            _persist_discovered_addon_url(
-                hass,
-                entry,
-                login_result.addon_url,
-                "setup",
-            )
+        total_attempts = 1 + FIRST_START_GRACE_RETRIES
+        for attempt in range(1, total_attempts + 1):
+            try:
+                login_result = await get_fresh_cookies(
+                    username,
+                    password,
+                    addon_url=addon_url,
+                )
+                _persist_discovered_addon_url(
+                    hass,
+                    entry,
+                    login_result.addon_url,
+                    "setup",
+                )
 
-            if login_result.cookies:
-                cookie = login_result.cookies
-                _LOGGER.debug("Successfully obtained fresh cookies from addon")
-            elif login_result.category == CATEGORY_CAPTCHA_REQUIRED:
+                if login_result.cookies:
+                    cookie = login_result.cookies
+                    _LOGGER.debug("Successfully obtained fresh cookies from addon")
+                    break
+                elif login_result.category == CATEGORY_CAPTCHA_REQUIRED:
+                    _LOGGER.warning(
+                        "reCAPTCHA challenge triggered during setup. "
+                        "Try reloading the integration — it usually passes on retry."
+                    )
+                    await hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": "PSEG Integration: reCAPTCHA Required",
+                            "message": (
+                                "reCAPTCHA challenge was triggered during login. "
+                                "Try reloading the integration — it usually passes "
+                                "after a few attempts with the persistent browser profile."
+                            ),
+                            "notification_id": "psegli_captcha_required",
+                        },
+                    )
+                    break
+                else:
+                    _LOGGER.warning(
+                        "Addon failed to get cookies (attempt %d/%d, category: %s, url: %s)",
+                        attempt,
+                        total_attempts,
+                        login_result.category,
+                        addon_url,
+                    )
+            except Exception as e:
                 _LOGGER.warning(
-                    "reCAPTCHA challenge triggered during setup. "
-                    "Try reloading the integration — it usually passes on retry."
-                )
-                await hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "title": "PSEG Integration: reCAPTCHA Required",
-                        "message": (
-                            "reCAPTCHA challenge was triggered during login. "
-                            "Try reloading the integration — it usually passes "
-                            "after a few attempts with the persistent browser profile."
-                        ),
-                        "notification_id": "psegli_captcha_required",
-                    },
-                )
-            else:
-                _LOGGER.warning(
-                    "Addon failed to get cookies (category: %s, url: %s)",
-                    login_result.category,
+                    "Failed to get cookies from addon (attempt %d/%d) url=%s: %s",
+                    attempt,
+                    total_attempts,
                     addon_url,
+                    e,
                 )
-        except Exception as e:
-            _LOGGER.warning(
-                "Failed to get cookies from addon url=%s: %s",
-                addon_url,
-                e,
-            )
+
+            if attempt < total_attempts:
+                _LOGGER.info(
+                    "Retrying addon login in %d seconds (attempt %d/%d)…",
+                    FIRST_START_GRACE_DELAY_SECONDS,
+                    attempt + 1,
+                    total_attempts,
+                )
+                await asyncio.sleep(FIRST_START_GRACE_DELAY_SECONDS)
 
     if not cookie:
         _LOGGER.warning(
