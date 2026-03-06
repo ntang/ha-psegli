@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.5.1.3
+
+- Fix add-on login result classification for reCAPTCHA challenge edge case:
+  - When login remains on the login page with `recaptcha_iframe=True` and no captured login API response, classify as CAPTCHA-required instead of generic login failure
+  - Integration now reports `captcha_required` for this path (instead of `invalid_credentials`)
+  - Improves troubleshooting accuracy and retry behavior for invisible reCAPTCHA blocks
+
 ## 2.5.1.2
 
 - Complete Phase C/E/F robustness work:

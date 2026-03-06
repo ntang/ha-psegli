@@ -45,7 +45,7 @@ LOG_LEVEL = logging.DEBUG if DEBUG_ENABLED else logging.INFO
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PSEG Long Island Automation", version="2.5.1.2")
+app = FastAPI(title="PSEG Long Island Automation", version="2.5.1.3")
 
 # Prevent concurrent login attempts (Playwright can only run one at a time)
 _login_lock = asyncio.Lock()
