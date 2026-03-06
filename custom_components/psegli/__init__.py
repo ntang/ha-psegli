@@ -40,13 +40,18 @@ from .const import (
     NOTIFICATION_VERBOSE,
     DEFAULT_ADDON_URL,
     OPTION_ADDON_URL_AUTO,
-    CAPTCHA_AUTO_RETRY_COUNT,
-    CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    CONF_CAPTCHA_AUTO_RETRY_COUNT,
+    CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    DEFAULT_CAPTCHA_AUTO_RETRY_COUNT,
+    DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
     FIRST_START_GRACE_RETRIES,
     FIRST_START_GRACE_DELAY_SECONDS,
     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
-    EXPIRY_WARNING_THRESHOLD_PERCENT,
+    CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+    DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
+    DEFAULT_AUTO_BACKFILL_TRIGGER_HOURS,
+    DEFAULT_MAX_AUTO_BACKFILL_DAYS,
 )
 from .psegli import InvalidAuth, PSEGLIClient, PSEGLIError
 from .supervisor import async_get_addon_url_from_supervisor
@@ -133,6 +138,88 @@ def _log_cookie_age(hass: HomeAssistant, label: str) -> None:
 def _record_cookie_obtained(hass: HomeAssistant) -> None:
     """Record the current time as when the cookie was obtained/refreshed."""
     hass.data.setdefault(DOMAIN, {})[_COOKIE_OBTAINED_AT] = datetime.now(tz=timezone.utc)
+
+
+def _parse_retry_delays(raw_value: Any) -> list[int]:
+    """Parse retry delays from options (comma string or list), fallback to defaults."""
+    if isinstance(raw_value, str):
+        parts = [part.strip() for part in raw_value.split(",")]
+        parsed = [int(part) for part in parts if part]
+        cleaned = [value for value in parsed if value >= 0]
+        if cleaned:
+            return cleaned
+    elif isinstance(raw_value, (list, tuple)):
+        cleaned = []
+        for value in raw_value:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed >= 0:
+                cleaned.append(parsed)
+        if cleaned:
+            return cleaned
+    return list(DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES)
+
+
+def _get_captcha_retry_policy(entry: ConfigEntry | None) -> tuple[int, list[int]]:
+    """Return effective CAPTCHA auto-retry count/delays from entry options."""
+    retry_count = DEFAULT_CAPTCHA_AUTO_RETRY_COUNT
+    retry_delays: list[int] = list(DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES)
+    if entry:
+        count_raw = entry.options.get(
+            CONF_CAPTCHA_AUTO_RETRY_COUNT,
+            DEFAULT_CAPTCHA_AUTO_RETRY_COUNT,
+        )
+        try:
+            retry_count = max(0, int(count_raw))
+        except (TypeError, ValueError):
+            retry_count = DEFAULT_CAPTCHA_AUTO_RETRY_COUNT
+
+        retry_delays = _parse_retry_delays(
+            entry.options.get(
+                CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+                DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+            )
+        )
+
+    return retry_count, retry_delays
+
+
+def _coerce_int_option(value: Any, default: int, minimum: int, maximum: int) -> int:
+    """Coerce an option value to int with bounds and fallback."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _compute_incremental_days_back(
+    domain_data: dict[str, Any],
+    now: datetime | None = None,
+    trigger_hours: int = DEFAULT_AUTO_BACKFILL_TRIGGER_HOURS,
+    max_days: int = DEFAULT_MAX_AUTO_BACKFILL_DAYS,
+) -> int:
+    """Compute backfill days from last successful datapoint cursor."""
+    if trigger_hours <= 0 or max_days <= 0:
+        return 0
+
+    last_datapoint = domain_data.get(_SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT)
+    if not isinstance(last_datapoint, datetime):
+        return 0
+    if last_datapoint.tzinfo is None:
+        return 0
+
+    current = now or datetime.now(tz=timezone.utc)
+    gap = current - last_datapoint
+    if gap <= timedelta(hours=trigger_hours):
+        return 0
+
+    days = max(1, int(gap.total_seconds() // 86400))
+    if gap.total_seconds() % 86400:
+        days += 1
+    return min(days, max_days)
 
 
 def _is_task_pending(task: asyncio.Task | None) -> bool:
@@ -854,9 +941,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Fetch and save energy data with the new cookie.
         try:
+            days_back = _compute_incremental_days_back(domain_data)
+            if days_back > 0:
+                _LOGGER.info(
+                    "[refresh:%s] Running bounded backfill after refresh (days_back=%d)",
+                    attempt_id,
+                    days_back,
+                )
             await _do_update_statistics(
                 hass,
-                days_back=0,
+                days_back=days_back,
                 trigger_refresh_on_auth_failure=False,
             )
         except Exception as stats_err:
@@ -992,13 +1086,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 return
             await _cancel_captcha_retry_task(f"rescheduled by {trigger_reason}")
 
+        active_entry = _get_active_entry(hass)
+        retry_count, retry_delays = _get_captcha_retry_policy(active_entry)
+        if retry_count <= 0:
+            _LOGGER.info("CAPTCHA auto-retry disabled by options (count=0)")
+            domain_data[_CAPTCHA_RETRY_TASK] = None
+            return
+
         async def _captcha_retry_loop() -> None:
             try:
-                for i in range(CAPTCHA_AUTO_RETRY_COUNT):
-                    delay_min = CAPTCHA_AUTO_RETRY_DELAYS_MINUTES[i] if i < len(CAPTCHA_AUTO_RETRY_DELAYS_MINUTES) else CAPTCHA_AUTO_RETRY_DELAYS_MINUTES[-1]
+                for i in range(retry_count):
+                    delay_min = retry_delays[i] if i < len(retry_delays) else retry_delays[-1]
                     _LOGGER.info(
                         "CAPTCHA auto-retry %d/%d scheduled in %d minutes (trigger: %s)",
-                        i + 1, CAPTCHA_AUTO_RETRY_COUNT, delay_min, trigger_reason,
+                        i + 1, retry_count, delay_min, trigger_reason,
                     )
                     await asyncio.sleep(delay_min * 60)
                     result = await _refresh_cookie_shared(
@@ -1007,7 +1108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         notify_on_failure=False,
                     )
                     if result:
-                        _LOGGER.info("CAPTCHA auto-retry %d/%d succeeded", i + 1, CAPTCHA_AUTO_RETRY_COUNT)
+                        _LOGGER.info("CAPTCHA auto-retry %d/%d succeeded", i + 1, retry_count)
                         return
                     # Stop if failure is no longer CAPTCHA-related
                     last_category = domain_data.get(_SIGNAL_LAST_REFRESH_FAILURE_CATEGORY)
@@ -1017,7 +1118,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             last_category,
                         )
                         return
-                _LOGGER.warning("All %d CAPTCHA auto-retries exhausted", CAPTCHA_AUTO_RETRY_COUNT)
+                _LOGGER.warning("All %d CAPTCHA auto-retries exhausted", retry_count)
             except asyncio.CancelledError:
                 _LOGGER.debug("CAPTCHA auto-retry task cancelled")
                 raise
@@ -1156,10 +1257,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if obtained_at:
                     cookie_age = datetime.now(tz=timezone.utc) - obtained_at
                     max_age = timedelta(hours=max_age_hours)
+                    warning_threshold_percent = _coerce_int_option(
+                        active_entry.options.get(
+                            CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+                            DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
+                        ),
+                        DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
+                        0,
+                        100,
+                    )
 
                     # Expiry warning: notify when approaching threshold
-                    warning_age = max_age * EXPIRY_WARNING_THRESHOLD_PERCENT / 100
-                    if cookie_age >= warning_age and cookie_age < max_age:
+                    warning_age = max_age * warning_threshold_percent / 100
+                    if (
+                        warning_threshold_percent > 0
+                        and cookie_age >= warning_age
+                        and cookie_age < max_age
+                    ):
                         now = datetime.now(tz=timezone.utc)
                         last_warning = domain_data.get(_LAST_EXPIRY_WARNING_AT)
                         if last_warning is None or now - last_warning >= timedelta(hours=4):
@@ -1214,7 +1328,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _log_cookie_age(hass, "scheduled check (still valid)")
                     # Still update statistics — energy data may have new readings
                     try:
-                        await _do_update_statistics(hass, days_back=0)
+                        days_back = _compute_incremental_days_back(domain_data)
+                        if days_back > 0:
+                            _LOGGER.info(
+                                "Incremental backfill triggered from datapoint gap (days_back=%d)",
+                                days_back,
+                            )
+                        await _do_update_statistics(hass, days_back=days_back)
                         _log_verbose("Statistics updated (cookie still valid)")
                     except Exception as stats_err:
                         _LOGGER.warning("Statistics update failed: %s", stats_err)

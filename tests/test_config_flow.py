@@ -21,6 +21,12 @@ from custom_components.psegli.const import (
     CONF_NOTIFICATION_LEVEL,
     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+    CONF_CAPTCHA_AUTO_RETRY_COUNT,
+    CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    DEFAULT_CAPTCHA_AUTO_RETRY_COUNT,
+    DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+    DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
     DIAGNOSTIC_STANDARD,
     NOTIFICATION_CRITICAL_ONLY,
 )
@@ -512,6 +518,22 @@ class TestPSEGLIOptionsFlow:
         key = next(k for k in schema.schema if str(k) == CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS)
         assert key.default() == DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS
 
+    async def test_options_schema_includes_retry_and_expiry_fields(self, mock_hass, mock_config_entry):
+        """Options schema exposes CAPTCHA retry and expiry warning controls."""
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init(None)
+        schema = result["data_schema"]
+        schema_keys = [str(k) for k in schema.schema]
+        assert CONF_CAPTCHA_AUTO_RETRY_COUNT in schema_keys
+        assert CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES in schema_keys
+        assert CONF_EXPIRY_WARNING_THRESHOLD_PERCENT in schema_keys
+        count_key = next(k for k in schema.schema if str(k) == CONF_CAPTCHA_AUTO_RETRY_COUNT)
+        delays_key = next(k for k in schema.schema if str(k) == CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES)
+        expiry_key = next(k for k in schema.schema if str(k) == CONF_EXPIRY_WARNING_THRESHOLD_PERCENT)
+        assert count_key.default() == DEFAULT_CAPTCHA_AUTO_RETRY_COUNT
+        assert delays_key.default() == ",".join(str(x) for x in DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES)
+        assert expiry_key.default() == DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT
+
     @patch("custom_components.psegli.config_flow.PSEGLIClient")
     async def test_options_persists_proactive_refresh_hours(
         self, mock_client_cls, mock_hass, mock_config_entry
@@ -529,6 +551,28 @@ class TestPSEGLIOptionsFlow:
 
         assert result["type"] == "create_entry"
         assert result["data"][CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS] == 12
+
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_options_persists_retry_and_expiry_values(
+        self, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """CAPTCHA retry and expiry settings persist when submitted."""
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client_cls.return_value = mock_client
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init({
+            CONF_COOKIE: "MM_SID=new",
+            CONF_CAPTCHA_AUTO_RETRY_COUNT: 1,
+            CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES: "0,2",
+            CONF_EXPIRY_WARNING_THRESHOLD_PERCENT: 70,
+        })
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_CAPTCHA_AUTO_RETRY_COUNT] == 1
+        assert result["data"][CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES] == "0,2"
+        assert result["data"][CONF_EXPIRY_WARNING_THRESHOLD_PERCENT] == 70
 
     @patch("custom_components.psegli.config_flow.PSEGLIClient")
     async def test_options_defaults_proactive_refresh_when_not_provided(

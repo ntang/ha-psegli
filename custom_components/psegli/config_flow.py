@@ -19,6 +19,12 @@ from .const import (
     CONF_NOTIFICATION_LEVEL,
     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+    CONF_CAPTCHA_AUTO_RETRY_COUNT,
+    CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    DEFAULT_CAPTCHA_AUTO_RETRY_COUNT,
+    DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+    DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
     DIAGNOSTIC_STANDARD,
     DIAGNOSTIC_VERBOSE,
     NOTIFICATION_CRITICAL_ONLY,
@@ -39,6 +45,11 @@ _LOGGER = logging.getLogger(__name__)
 def _normalize_addon_url(value: str | None) -> str:
     """Normalize addon URL with default fallback and no trailing slash."""
     return (value or DEFAULT_ADDON_URL).rstrip("/")
+
+
+def _default_retry_delays_text() -> str:
+    """Return the default retry-delay list as a comma-separated string."""
+    return ",".join(str(v) for v in DEFAULT_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES)
 
 
 async def _run_preflight(_hass: HomeAssistant, addon_url: str) -> dict[str, str]:
@@ -221,6 +232,24 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
                     DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
                 )
+                current_retry_count = self.config_entry.options.get(
+                    CONF_CAPTCHA_AUTO_RETRY_COUNT,
+                    DEFAULT_CAPTCHA_AUTO_RETRY_COUNT,
+                )
+                current_retry_delays = self.config_entry.options.get(
+                    CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+                    _default_retry_delays_text(),
+                )
+                current_expiry_threshold = self.config_entry.options.get(
+                    CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+                    DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
+                )
+                retry_delays_text = str(
+                    user_input.get(
+                        CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+                        current_retry_delays,
+                    )
+                ).strip()
 
                 # Always persist observability options
                 options_data = {
@@ -235,6 +264,15 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: user_input.get(
                         CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
                         current_proactive_max_age,
+                    ),
+                    CONF_CAPTCHA_AUTO_RETRY_COUNT: user_input.get(
+                        CONF_CAPTCHA_AUTO_RETRY_COUNT,
+                        current_retry_count,
+                    ),
+                    CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES: retry_delays_text,
+                    CONF_EXPIRY_WARNING_THRESHOLD_PERCENT: user_input.get(
+                        CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+                        current_expiry_threshold,
                     ),
                 }
                 if manual_url_override:
@@ -351,6 +389,18 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
             CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
             DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
         )
+        current_retry_count = self.config_entry.options.get(
+            CONF_CAPTCHA_AUTO_RETRY_COUNT,
+            DEFAULT_CAPTCHA_AUTO_RETRY_COUNT,
+        )
+        current_retry_delays = self.config_entry.options.get(
+            CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+            _default_retry_delays_text(),
+        )
+        current_expiry_threshold = self.config_entry.options.get(
+            CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+            DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -359,6 +409,9 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                 current_notif,
                 current_addon_url,
                 current_refresh_hours,
+                current_retry_count,
+                str(current_retry_delays),
+                current_expiry_threshold,
             ),
             errors=errors,
             description_placeholders={
@@ -372,8 +425,12 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
         current_notif: str = NOTIFICATION_CRITICAL_ONLY,
         current_addon_url: str = DEFAULT_ADDON_URL,
         current_refresh_hours: int = DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
+        current_retry_count: int = DEFAULT_CAPTCHA_AUTO_RETRY_COUNT,
+        current_retry_delays: str = "",
+        current_expiry_threshold: int = DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
     ):
         """Return the schema for the options flow."""
+        default_delays = current_retry_delays or _default_retry_delays_text()
         return vol.Schema({
             vol.Optional(CONF_COOKIE, description="Leave empty to attempt automatic refresh via addon"): str,
             vol.Optional(CONF_ADDON_URL, default=current_addon_url): str,
@@ -381,6 +438,18 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                 CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
                 default=current_refresh_hours,
             ): vol.All(vol.Coerce(int), vol.Range(min=0, max=168)),
+            vol.Optional(
+                CONF_CAPTCHA_AUTO_RETRY_COUNT,
+                default=current_retry_count,
+            ): vol.All(vol.Coerce(int), vol.Range(min=0, max=10)),
+            vol.Optional(
+                CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+                default=default_delays,
+            ): str,
+            vol.Optional(
+                CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+                default=current_expiry_threshold,
+            ): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
             vol.Optional(
                 CONF_DIAGNOSTIC_LEVEL,
                 default=current_diag,

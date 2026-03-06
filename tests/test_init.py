@@ -58,6 +58,7 @@ from custom_components.psegli import (
     _ADDON_CIRCUIT_OPEN_FOR_URL,
     _LAST_ADDON_UNREACHABLE_NOTIFICATION_AT,
     OPTION_ADDON_URL_AUTO,
+    _compute_incremental_days_back,
 )
 from custom_components.psegli.auto_login import (
     LoginResult,
@@ -76,6 +77,10 @@ from custom_components.psegli.const import (
     CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     DEFAULT_PROACTIVE_REFRESH_MAX_AGE_HOURS,
     EXPIRY_WARNING_THRESHOLD_PERCENT,
+    CONF_CAPTCHA_AUTO_RETRY_COUNT,
+    CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES,
+    CONF_EXPIRY_WARNING_THRESHOLD_PERCENT,
+    DEFAULT_EXPIRY_WARNING_THRESHOLD_PERCENT,
     DIAGNOSTIC_VERBOSE,
     NOTIFICATION_VERBOSE,
 )
@@ -1325,12 +1330,12 @@ class TestSignalTracking:
         mock_client.cookie = "MM_SID=valid_test_cookie"
         mock_client_cls.return_value = mock_client
         mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_config_entry.options = {
+            CONF_CAPTCHA_AUTO_RETRY_COUNT: 1,
+            CONF_CAPTCHA_AUTO_RETRY_DELAYS_MINUTES: "0",
+        }
 
-        with (
-            patch("custom_components.psegli.CAPTCHA_AUTO_RETRY_COUNT", 1),
-            patch("custom_components.psegli.CAPTCHA_AUTO_RETRY_DELAYS_MINUTES", [0]),
-            patch("custom_components.psegli.asyncio.sleep", new=AsyncMock(return_value=None)),
-        ):
+        with patch("custom_components.psegli.asyncio.sleep", new=AsyncMock(return_value=None)):
             await async_setup_entry(mock_hass, mock_config_entry)
             handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
             await handler(MagicMock(data={}))
@@ -1342,6 +1347,28 @@ class TestSignalTracking:
                 await asyncio.wait_for(retry_task, timeout=1)
 
         assert mock_fresh.call_count == 2
+        assert mock_hass.data[DOMAIN].get(_CAPTCHA_RETRY_TASK) is None
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_captcha_retry_disabled_when_count_zero(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """CAPTCHA auto-retry is disabled when retry count option is 0."""
+        mock_health.return_value = True
+        mock_fresh.return_value = LoginResult(cookies=None, category=CATEGORY_CAPTCHA_REQUIRED)
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_config_entry.options = {CONF_CAPTCHA_AUTO_RETRY_COUNT: 0}
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
         assert mock_hass.data[DOMAIN].get(_CAPTCHA_RETRY_TASK) is None
 
     @patch("custom_components.psegli.PSEGLIClient")
@@ -1632,6 +1659,99 @@ class TestProactiveRefreshAndExpiryWarning:
 
         assert mock_health.call_count == 1
         mock_client.test_data_path.assert_called_once()
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_expiry_warning_threshold_uses_option_value(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Expiry warning should follow configured percentage threshold."""
+        mock_health.return_value = True
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.test_data_path = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client.get_usage_data = MagicMock(return_value={"chart_data": {}})
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+        mock_config_entry.options = {
+            CONF_PROACTIVE_REFRESH_MAX_AGE_HOURS: 20,
+            CONF_EXPIRY_WARNING_THRESHOLD_PERCENT: 50,
+        }
+
+        captured = {}
+
+        def _capture_scheduled_task(_hass, coro, _name, eager_start=True):
+            captured["coro"] = coro
+            task = MagicMock()
+            task.done.return_value = False
+            task.cancel = MagicMock()
+            return task
+
+        mock_config_entry.async_create_background_task = MagicMock(
+            side_effect=_capture_scheduled_task
+        )
+
+        result = await async_setup_entry(mock_hass, mock_config_entry)
+        assert result is True
+        assert "coro" in captured
+
+        from custom_components.psegli import _COOKIE_OBTAINED_AT
+
+        # 12h age over 20h max = 60%; should warn at 50% threshold
+        mock_hass.data[DOMAIN][_COOKIE_OBTAINED_AT] = (
+            datetime.now(tz=timezone.utc) - timedelta(hours=12)
+        )
+
+        sleep_calls = 0
+
+        async def _sleep_once_then_cancel(_seconds):
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 1:
+                return None
+            raise asyncio.CancelledError
+
+        with patch("custom_components.psegli.asyncio.sleep", side_effect=_sleep_once_then_cancel):
+            await captured["coro"]
+
+        created = [
+            c for c in mock_hass.services.async_call.call_args_list
+            if c.args[0] == "persistent_notification"
+            and c.args[1] == "create"
+            and c.args[2].get("notification_id") == "psegli_cookie_expiry_warning"
+        ]
+        assert len(created) == 1
+
+
+class TestPhaseFIncrementalBackfill:
+    """Tests for incremental days_back/backfill sizing."""
+
+    def test_compute_incremental_days_back_without_cursor(self):
+        """No datapoint cursor should default to incremental window (0)."""
+        assert _compute_incremental_days_back({}) == 0
+
+    def test_compute_incremental_days_back_below_trigger(self):
+        """Gap below trigger should not backfill."""
+        domain_data = {
+            _SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT: datetime.now(tz=timezone.utc) - timedelta(hours=6)
+        }
+        assert _compute_incremental_days_back(domain_data) == 0
+
+    def test_compute_incremental_days_back_triggered(self):
+        """Gap beyond trigger should request bounded days_back."""
+        domain_data = {
+            _SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT: datetime.now(tz=timezone.utc) - timedelta(hours=50)
+        }
+        assert _compute_incremental_days_back(domain_data) == 3
+
+    def test_compute_incremental_days_back_capped(self):
+        """Requested window is capped at configured maximum days."""
+        domain_data = {
+            _SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT: datetime.now(tz=timezone.utc) - timedelta(days=90)
+        }
+        assert _compute_incremental_days_back(domain_data) == 30
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,9 @@
         "cookie": "Authentication Cookie (leave empty for auto-refresh)",
         "addon_url": "Automation Add-on URL",
         "proactive_refresh_max_age_hours": "Proactive Refresh Max Age (hours, 0 to disable)",
+        "captcha_auto_retry_count": "CAPTCHA Auto-Retry Count (0 to disable)",
+        "captcha_auto_retry_delays_minutes": "CAPTCHA Retry Delays (minutes, comma-separated)",
+        "expiry_warning_threshold_percent": "Expiry Warning Threshold Percent (0 to disable)",
         "diagnostic_level": "Diagnostic Level",
         "notification_level": "Notification Level"
       }
