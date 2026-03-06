@@ -280,28 +280,49 @@ class TestPSEGLIOptionsFlow:
         )
 
     @patch("custom_components.psegli.config_flow.get_fresh_cookies", new_callable=AsyncMock)
-    async def test_options_no_cookie_captcha_shows_error(
+    async def test_options_no_cookie_captcha_still_saves_options(
         self, mock_fresh, mock_hass, mock_config_entry
     ):
-        """CAPTCHA during options addon fetch shows error."""
+        """CAPTCHA during options addon fetch should not block saving options."""
         mock_fresh.return_value = LoginResult(category=CATEGORY_CAPTCHA_REQUIRED)
 
         flow = _make_options_flow(mock_hass, mock_config_entry)
         result = await flow.async_step_init({CONF_COOKIE: ""})
 
-        assert result["type"] == "form"
-        assert result["errors"]["base"] == "captcha_required"
+        assert result["type"] == "create_entry"
 
-    async def test_options_no_credentials_shows_error(self, mock_hass):
-        """No credentials in config entry shows credentials_not_found error."""
+    @patch("custom_components.psegli.config_flow.get_fresh_cookies", new_callable=AsyncMock)
+    async def test_options_no_cookie_addon_failure_still_saves_addon_url(
+        self, mock_fresh, mock_hass, mock_config_entry
+    ):
+        """Addon refresh failure should not block saving addon_url/options."""
+        custom_url = "http://84ee8c30-psegli-automation:8000"
+        mock_fresh.return_value = LoginResult(category="invalid_credentials")
+
+        flow = _make_options_flow(mock_hass, mock_config_entry)
+        result = await flow.async_step_init(
+            {
+                CONF_COOKIE: "",
+                CONF_ADDON_URL: custom_url,
+                CONF_DIAGNOSTIC_LEVEL: "verbose",
+                CONF_NOTIFICATION_LEVEL: "verbose",
+            }
+        )
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_ADDON_URL] == custom_url
+        assert result["data"][CONF_DIAGNOSTIC_LEVEL] == "verbose"
+        assert result["data"][CONF_NOTIFICATION_LEVEL] == "verbose"
+
+    async def test_options_no_credentials_still_saves_options(self, mock_hass):
+        """No credentials should not block saving non-auth options."""
         entry = MagicMock()
         entry.data = {CONF_USERNAME: "", CONF_PASSWORD: "", CONF_COOKIE: ""}
 
         flow = _make_options_flow(mock_hass, entry)
         result = await flow.async_step_init({CONF_COOKIE: ""})
 
-        assert result["type"] == "form"
-        assert result["errors"]["base"] == "credentials_not_found"
+        assert result["type"] == "create_entry"
 
     async def test_options_shows_form_on_first_visit(self, mock_hass, mock_config_entry):
         """First visit (no input) shows the options form."""

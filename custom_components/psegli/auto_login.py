@@ -6,6 +6,7 @@ import logging
 import random
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -39,11 +40,57 @@ _MAX_LOGIN_RETRIES = 3
 _RETRY_BASE_DELAY = 2.0  # seconds
 _RETRY_MAX_JITTER = 2.0  # seconds
 
+# Common HA add-on DNS names seen across environments.
+_FALLBACK_ADDON_URLS = (
+    "http://84ee8c30-psegli-automation:8000",
+    "http://84ee8c30_psegli-automation:8000",
+    "http://psegli-automation:8000",
+)
+
 
 def _normalize_addon_url(addon_url: Optional[str]) -> str:
     """Normalize configured addon URL with fallback + no trailing slash."""
     raw = addon_url or DEFAULT_ADDON_URL
     return raw.rstrip("/")
+
+
+def _build_addon_url_candidates(addon_url: Optional[str]) -> list[str]:
+    """Build prioritized addon URL candidates for resilient probing."""
+    primary = _normalize_addon_url(addon_url)
+    default = _normalize_addon_url(DEFAULT_ADDON_URL)
+    host = (urlparse(primary).hostname or "").lower()
+    is_local = host in {"localhost", "127.0.0.1", "::1"}
+
+    candidates: list[str] = [primary]
+
+    # If configured URL is local, prefer container DNS names next.
+    if is_local:
+        candidates.extend(_FALLBACK_ADDON_URLS)
+    else:
+        # Keep default as a fallback when primary is remote/custom.
+        candidates.append(default)
+        candidates.extend(_FALLBACK_ADDON_URLS)
+
+    # Preserve order while removing duplicates.
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = _normalize_addon_url(candidate)
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(normalized)
+    return unique
+
+
+def _candidate_for_attempt(candidates: list[str], attempt: int) -> str:
+    """Select candidate for 1-based attempt index."""
+    if not candidates:
+        return _normalize_addon_url(None)
+    if len(candidates) == 1:
+        return candidates[0]
+    # With multiple candidates, probe a new one per retry until exhausted.
+    idx = min(attempt - 1, len(candidates) - 1)
+    return candidates[idx]
 
 
 async def check_addon_health(addon_url: Optional[str] = None) -> bool:
@@ -53,32 +100,38 @@ async def check_addon_health(addon_url: Optional[str] = None) -> bool:
     subsequent addon calls (the addon could go down between the health
     check and the actual request).
     """
-    base_url = _normalize_addon_url(addon_url)
-    health_url = f"{base_url}/health"
-    logger.info("Addon health check: %s", health_url)
-    try:
-        timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(health_url) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    if result.get("status") == "healthy":
-                        logger.info("Addon health check passed: %s", health_url)
-                        return True
+    candidates = _build_addon_url_candidates(addon_url)
+    logger.info("Addon health check candidates: %s", ", ".join(candidates))
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for idx, base_url in enumerate(candidates, start=1):
+            health_url = f"{base_url}/health"
+            logger.info(
+                "Addon health check attempt %d/%d: %s",
+                idx,
+                len(candidates),
+                health_url,
+            )
+            try:
+                async with session.get(health_url) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("status") == "healthy":
+                            logger.info("Addon health check passed: %s", health_url)
+                            return True
+                    logger.warning(
+                        "Addon health check failed: url=%s status=%s",
+                        health_url,
+                        resp.status,
+                    )
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 logger.warning(
-                    "Addon health check failed: url=%s status=%s",
+                    "Addon health check transport failure: url=%s error=%s (%s)",
                     health_url,
-                    resp.status,
+                    e,
+                    type(e).__name__,
                 )
-                return False
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        logger.warning(
-            "Addon health check transport failure: url=%s error=%s (%s)",
-            health_url,
-            e,
-            type(e).__name__,
-        )
-        return False
+    return False
 
 
 async def _attempt_login(
@@ -154,10 +207,12 @@ async def get_fresh_cookies(
     Returns:
         LoginResult with cookies on success, or a failure category.
     """
-    base_url = _normalize_addon_url(addon_url)
+    primary_url = _normalize_addon_url(addon_url)
+    candidates = _build_addon_url_candidates(addon_url)
     logger.info(
-        "Requesting fresh cookies from addon: base_url=%s retries=%d timeout=%ss",
-        base_url,
+        "Requesting fresh cookies from addon: primary_url=%s candidates=%s retries=%d timeout=%ss",
+        primary_url,
+        ", ".join(candidates),
         _MAX_LOGIN_RETRIES,
         120,
     )
@@ -169,17 +224,24 @@ async def get_fresh_cookies(
     }
 
     last_transport_error: Optional[Exception] = None
+    attempted_urls: list[str] = []
 
     for attempt in range(1, _MAX_LOGIN_RETRIES + 1):
+        attempt_url = _candidate_for_attempt(candidates, attempt)
+        attempted_urls.append(attempt_url)
         try:
             logger.info(
                 "Addon login attempt %d/%d via %s/login",
                 attempt,
                 _MAX_LOGIN_RETRIES,
-                base_url,
+                attempt_url,
             )
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                result = await _attempt_login(session, login_data, addon_url=base_url)
+                result = await _attempt_login(
+                    session,
+                    login_data,
+                    addon_url=attempt_url,
+                )
             # Any non-exception return is a functional response — don't retry.
             return result
 
@@ -187,22 +249,35 @@ async def get_fresh_cookies(
             last_transport_error = e
             if attempt < _MAX_LOGIN_RETRIES:
                 delay = _RETRY_BASE_DELAY * attempt + random.uniform(0, _RETRY_MAX_JITTER)
-                logger.warning(
-                    "Addon login transport failure (attempt %d/%d, url=%s/login): %s (%s) — retrying in %.1fs",
-                    attempt,
-                    _MAX_LOGIN_RETRIES,
-                    base_url,
-                    e,
-                    type(e).__name__,
-                    delay,
-                )
+                next_url = _candidate_for_attempt(candidates, attempt + 1)
+                if next_url != attempt_url:
+                    logger.warning(
+                        "Addon login transport failure (attempt %d/%d, url=%s/login): %s (%s) — switching to %s/login in %.1fs",
+                        attempt,
+                        _MAX_LOGIN_RETRIES,
+                        attempt_url,
+                        e,
+                        type(e).__name__,
+                        next_url,
+                        delay,
+                    )
+                else:
+                    logger.warning(
+                        "Addon login transport failure (attempt %d/%d, url=%s/login): %s (%s) — retrying in %.1fs",
+                        attempt,
+                        _MAX_LOGIN_RETRIES,
+                        attempt_url,
+                        e,
+                        type(e).__name__,
+                        delay,
+                    )
                 await asyncio.sleep(delay)
             else:
                 logger.error(
                     "Addon login transport failure (attempt %d/%d, url=%s/login): %s (%s) — no more retries",
                     attempt,
                     _MAX_LOGIN_RETRIES,
-                    base_url,
+                    attempt_url,
                     e,
                     type(e).__name__,
                 )
@@ -210,7 +285,7 @@ async def get_fresh_cookies(
         except Exception as e:
             logger.exception(
                 "Unexpected error getting cookies from addon url=%s: %s (%s)",
-                base_url,
+                attempt_url,
                 e,
                 type(e).__name__,
             )
@@ -218,9 +293,9 @@ async def get_fresh_cookies(
 
     # All retries exhausted due to transport failures
     logger.error(
-        "Failed to connect to addon after %d attempts (url=%s/login): %s (%s)",
+        "Failed to connect to addon after %d attempts (tried=%s): %s (%s)",
         _MAX_LOGIN_RETRIES,
-        base_url,
+        ", ".join(dict.fromkeys(attempted_urls)),
         last_transport_error,
         type(last_transport_error).__name__ if last_transport_error else "Unknown",
     )

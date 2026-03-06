@@ -208,7 +208,9 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                         )
 
                         if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
-                            errors["base"] = "captcha_required"
+                            _LOGGER.warning(
+                                "Addon refresh requires CAPTCHA; saving options without cookie update"
+                            )
                         elif login_result.cookies:
                             client = PSEGLIClient(login_result.cookies)
                             await self.hass.async_add_executor_job(client.test_connection)
@@ -225,18 +227,21 @@ class PSEGLIOptionsFlow(config_entries.OptionsFlow):
                             )
 
                             _LOGGER.debug("Successfully obtained and validated fresh cookies from addon")
-                            return self.async_create_entry(title="", data=options_data)
                         else:
-                            errors["base"] = "addon_unavailable"
+                            _LOGGER.warning(
+                                "Addon did not return cookies (category: %s); saving options without cookie update",
+                                login_result.category,
+                            )
                     except Exception as e:
-                        _LOGGER.error(
-                            "Failed to get cookies from addon url=%s: %s",
+                        _LOGGER.warning(
+                            "Failed to get cookies from addon url=%s: %s; saving options without cookie update",
                             addon_url,
                             e,
                         )
-                        errors["base"] = "addon_failed"
                 else:
-                    errors["base"] = "credentials_not_found"
+                    _LOGGER.warning(
+                        "No credentials found on config entry; saving options without cookie update"
+                    )
 
                 # Even on error, persist observability options if they changed
                 if not errors:

@@ -13,6 +13,7 @@ import inspect
 import json
 import logging
 import os
+import time
 from enum import Enum
 from typing import Optional
 
@@ -169,6 +170,14 @@ class PSEGAutoLogin:
 
             # Evaluate result
             if login_response:
+                _LOGGER.debug("Login API payload: %s", login_response)
+            else:
+                _LOGGER.warning(
+                    "No login API response captured after submit (url=%s)",
+                    self.page.url,
+                )
+
+            if login_response:
                 data = login_response.get("Data", {})
                 error_msg = data.get("LoginErrorMessage", "")
 
@@ -183,7 +192,7 @@ class PSEGAutoLogin:
             # Check if we're on the authenticated dashboard
             login_form_still = await self.page.query_selector("#LoginEmail")
             if login_form_still:
-                _LOGGER.error("Login failed — still on login page")
+                await self._log_login_failure_context(login_response)
                 return LoginResult.FAILED, None
 
             # Extract cookies
@@ -205,6 +214,71 @@ class PSEGAutoLogin:
                     await maybe_awaitable
             except Exception:
                 pass
+
+    async def _log_login_failure_context(self, login_response: dict) -> None:
+        """Capture high-signal context when login remains on the login page."""
+        url = self.page.url
+        title = "unknown"
+        has_recaptcha_iframe = False
+        page_errors: list[str] = []
+
+        try:
+            title = await self.page.title()
+        except Exception:
+            pass
+
+        try:
+            recaptcha = await self.page.query_selector(
+                'iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]'
+            )
+            has_recaptcha_iframe = recaptcha is not None
+        except Exception:
+            pass
+
+        for selector in (
+            "#LoginErrorMessage",
+            ".validation-summary-errors",
+            ".field-validation-error",
+        ):
+            try:
+                node = await self.page.query_selector(selector)
+                if node:
+                    text = (await node.inner_text()).strip()
+                    if text:
+                        page_errors.append(f"{selector}={text}")
+            except Exception:
+                continue
+
+        api_data = login_response.get("Data", {})
+        api_error = api_data.get("LoginErrorMessage") or login_response.get("error")
+        api_status = login_response.get("_status")
+
+        _LOGGER.error(
+            "Login failed — still on login page (url=%s title=%s recaptcha_iframe=%s login_api_status=%s login_api_error=%s page_errors=%s)",
+            url,
+            title,
+            has_recaptcha_iframe,
+            api_status,
+            api_error,
+            " | ".join(page_errors) if page_errors else "none",
+        )
+
+        # Save artifacts for post-mortem while debugging hard failures.
+        try:
+            stamp = int(time.time())
+            html_path = f"/tmp/psegli_login_failure_{stamp}.html"
+            screenshot_path = f"/tmp/psegli_login_failure_{stamp}.png"
+            html = await self.page.content()
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            await self.page.screenshot(path=screenshot_path, full_page=True)
+            _LOGGER.info(
+                "Saved login failure artifacts: html=%s screenshot=%s",
+                html_path,
+                screenshot_path,
+            )
+        except Exception as e:
+            _LOGGER.warning("Failed to save login failure artifacts: %s", e)
 
     async def _extract_cookies(self) -> Optional[str]:
         """Extract MM_SID and __RequestVerificationToken from browser context."""

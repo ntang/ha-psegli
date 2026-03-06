@@ -262,3 +262,32 @@ class TestGetFreshCookiesRetry:
 
         assert result.cookies == "MM_SID=abc; __RequestVerificationToken=xyz"
         assert mock_attempt.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("custom_components.psegli.auto_login._attempt_login", new_callable=AsyncMock)
+    @patch("custom_components.psegli.auto_login.asyncio.sleep", new_callable=AsyncMock)
+    async def test_probes_fallback_addon_url_when_localhost_disconnects(
+        self, mock_sleep, mock_attempt
+    ):
+        """When localhost transport fails, login should probe alternate addon URLs."""
+        seen_urls: list[str] = []
+
+        async def _side_effect(*_args, **kwargs):
+            addon_url = kwargs["addon_url"]
+            seen_urls.append(addon_url)
+            if addon_url == "http://localhost:8000":
+                raise aiohttp.ServerDisconnectedError("Server disconnected")
+            return LoginResult(cookies="MM_SID=abc; __RequestVerificationToken=xyz")
+
+        mock_attempt.side_effect = _side_effect
+
+        result = await get_fresh_cookies(
+            "user",
+            "pass",
+            addon_url="http://localhost:8000",
+        )
+
+        assert result.cookies == "MM_SID=abc; __RequestVerificationToken=xyz"
+        assert seen_urls[0] == "http://localhost:8000"
+        assert any("psegli-automation" in url for url in seen_urls[1:])
+        assert mock_sleep.call_count == 1
