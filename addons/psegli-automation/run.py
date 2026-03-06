@@ -16,7 +16,12 @@ from fastapi import FastAPI, Form
 from pydantic import BaseModel
 
 from artifacts import list_login_failure_artifacts, prune_login_failure_artifacts
-from auto_login import CAPTCHA_REQUIRED_SENTINEL, get_fresh_cookies, get_effective_profile_dir
+from auto_login import (
+    CAPTCHA_REQUIRED_SENTINEL,
+    FreshCookieResult,
+    get_fresh_cookies,
+    get_effective_profile_dir,
+)
 from profile_state import get_profile_status
 
 # Set HEADED=1 to run browser in headed mode (visible) for debugging
@@ -69,6 +74,8 @@ class LoginResponse(BaseModel):
     cookies: Optional[str] = None
     error: Optional[str] = None
     captcha_required: Optional[bool] = None
+    category: Optional[str] = None
+    subreason: Optional[str] = None
 
 
 @app.get("/health")
@@ -104,30 +111,69 @@ async def login(request: LoginRequest):
         try:
             logger.info("Login attempt for user: %s", request.username)
 
-            result = await get_fresh_cookies(
+            raw_result = await get_fresh_cookies(
                 username=request.username,
                 password=request.password,
                 headless=not HEADED,
+                include_failure_details=True,
             )
 
-            if result == CAPTCHA_REQUIRED_SENTINEL:
+            if isinstance(raw_result, FreshCookieResult):
+                result = raw_result
+            elif isinstance(raw_result, str):
+                if raw_result == CAPTCHA_REQUIRED_SENTINEL:
+                    result = FreshCookieResult(
+                        cookies=None,
+                        category="captcha_required",
+                        captcha_required=True,
+                        error=(
+                            "reCAPTCHA challenge triggered. "
+                            "Try again — it usually passes after a few attempts "
+                            "with the persistent browser profile."
+                        ),
+                    )
+                else:
+                    result = FreshCookieResult(cookies=raw_result)
+            elif isinstance(raw_result, dict):
+                result = FreshCookieResult(
+                    cookies=raw_result.get("cookies"),
+                    category=raw_result.get("category"),
+                    subreason=raw_result.get("subreason"),
+                    error=raw_result.get("error"),
+                    captcha_required=bool(raw_result.get("captcha_required")),
+                )
+            else:
+                result = FreshCookieResult(
+                    cookies=None,
+                    category="unknown_runtime_error",
+                    error="Login failed",
+                )
+
+            if result.captcha_required:
                 logger.warning("CAPTCHA required — manual intervention needed")
                 return LoginResponse(
                     success=False,
                     captcha_required=True,
-                    error=(
-                        "reCAPTCHA challenge triggered. "
-                        "Try again — it usually passes after a few attempts "
-                        "with the persistent browser profile."
-                    ),
+                    error=result.error,
+                    category=result.category,
+                    subreason=result.subreason,
                 )
 
-            if result:
+            if result.cookies:
                 logger.info("Login successful, cookies obtained")
-                return LoginResponse(success=True, cookies=result)
+                return LoginResponse(success=True, cookies=result.cookies)
 
-            logger.warning("Login failed, no cookies returned")
-            return LoginResponse(success=False, error="Login failed")
+            logger.warning(
+                "Login failed, no cookies returned (category=%s subreason=%s)",
+                result.category,
+                result.subreason,
+            )
+            return LoginResponse(
+                success=False,
+                error=result.error or "Login failed",
+                category=result.category,
+                subreason=result.subreason,
+            )
 
         except Exception as e:
             logger.error("Login error: %s", e)

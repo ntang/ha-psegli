@@ -5,7 +5,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import aiohttp
@@ -24,7 +24,30 @@ CATEGORY_ADDON_UNREACHABLE = "addon_unreachable"
 CATEGORY_ADDON_DISCONNECT = "addon_disconnect"
 CATEGORY_CAPTCHA_REQUIRED = "captcha_required"
 CATEGORY_INVALID_CREDENTIALS = "invalid_credentials"
+CATEGORY_TRANSIENT_SITE_ERROR = "transient_site_error"
 CATEGORY_UNKNOWN_ERROR = "unknown_runtime_error"
+
+_KNOWN_CATEGORIES = {
+    CATEGORY_ADDON_UNREACHABLE,
+    CATEGORY_ADDON_DISCONNECT,
+    CATEGORY_CAPTCHA_REQUIRED,
+    CATEGORY_INVALID_CREDENTIALS,
+    CATEGORY_TRANSIENT_SITE_ERROR,
+    CATEGORY_UNKNOWN_ERROR,
+}
+
+_TRANSIENT_ERROR_MARKERS = (
+    "timeout",
+    "timed out",
+    "temporarily unavailable",
+    "service unavailable",
+    "gateway",
+    "upstream",
+    "500",
+    "502",
+    "503",
+    "504",
+)
 
 
 @dataclass
@@ -92,6 +115,14 @@ def _candidate_for_attempt(candidates: list[str], attempt: int) -> str:
     # With multiple candidates, probe a new one per retry until exhausted.
     idx = min(attempt - 1, len(candidates) - 1)
     return candidates[idx]
+
+
+def _looks_transient_error_message(error: Any) -> bool:
+    """Best-effort classifier for transient upstream-site failures."""
+    if not error:
+        return False
+    lowered = str(error).lower()
+    return any(marker in lowered for marker in _TRANSIENT_ERROR_MARKERS)
 
 
 async def check_addon_health(addon_url: Optional[str] = None) -> bool:
@@ -184,6 +215,33 @@ async def _attempt_login(
                     category=CATEGORY_CAPTCHA_REQUIRED,
                     addon_url=base_url,
                 )
+            addon_category = result.get("category")
+            if addon_category:
+                if addon_category in _KNOWN_CATEGORIES:
+                    return LoginResult(
+                        category=addon_category,
+                        addon_url=base_url,
+                    )
+                logger.warning(
+                    "Addon returned unknown failure category '%s'; mapping to %s",
+                    addon_category,
+                    CATEGORY_UNKNOWN_ERROR,
+                )
+                return LoginResult(
+                    category=CATEGORY_UNKNOWN_ERROR,
+                    addon_url=base_url,
+                )
+
+            if _looks_transient_error_message(result.get("error")):
+                logger.warning(
+                    "Addon login failed with transient-looking error: %s",
+                    result.get("error"),
+                )
+                return LoginResult(
+                    category=CATEGORY_TRANSIENT_SITE_ERROR,
+                    addon_url=base_url,
+                )
+
             logger.error(
                 "Addon login failed: url=%s error=%s",
                 login_url,

@@ -64,6 +64,8 @@ from .auto_login import (
     CATEGORY_CAPTCHA_REQUIRED,
     CATEGORY_ADDON_DISCONNECT,
     CATEGORY_ADDON_UNREACHABLE,
+    CATEGORY_INVALID_CREDENTIALS,
+    CATEGORY_TRANSIENT_SITE_ERROR,
     CATEGORY_UNKNOWN_ERROR,
 )
 
@@ -597,6 +599,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             and active.options.get(CONF_NOTIFICATION_LEVEL) == NOTIFICATION_VERBOSE
         )
 
+    def _refresh_failure_message(category: str | None) -> str:
+        """Return category-aware user guidance for cookie refresh failures."""
+        if category == CATEGORY_TRANSIENT_SITE_ERROR:
+            return (
+                "PSEG appears temporarily unavailable. Please wait and retry. "
+                "Your credentials and cookie are likely fine."
+            )
+        if category in (CATEGORY_ADDON_UNREACHABLE, CATEGORY_ADDON_DISCONNECT):
+            return (
+                "Could not reach the PSEG add-on. Please check add-on status and URL."
+            )
+        if category == CATEGORY_INVALID_CREDENTIALS:
+            return (
+                "Authentication was rejected. Please verify your credentials or provide a new cookie."
+            )
+        return (
+            "Please check add-on status or provide a cookie manually."
+        )
+
     def _record_signal(key: str, value: Any) -> None:
         """Store a signal value in domain_data."""
         domain_data[key] = value
@@ -895,7 +916,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "message": (
                             "Failed to refresh your PSEG authentication cookie "
                             f"(reason: {login_result.category}). "
-                            "Please check addon status or provide a cookie manually."
+                            f"{_refresh_failure_message(login_result.category)}"
                         ),
                         "notification_id": "psegli_cookie_refresh_failed",
                     },

@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
@@ -54,6 +55,23 @@ def get_effective_profile_dir(profile_dir: Optional[str] = None) -> str:
 LOGIN_URL = "https://mysmartenergy.psegliny.com/Dashboard"
 LOGIN_API_PATH = "/Home/Login"
 CAPTCHA_REQUIRED_SENTINEL = "CAPTCHA_REQUIRED"
+CATEGORY_CAPTCHA_REQUIRED = "captcha_required"
+CATEGORY_INVALID_CREDENTIALS = "invalid_credentials"
+CATEGORY_TRANSIENT_SITE_ERROR = "transient_site_error"
+CATEGORY_UNKNOWN_RUNTIME_ERROR = "unknown_runtime_error"
+
+_TRANSIENT_ERROR_MARKERS = (
+    "timeout",
+    "timed out",
+    "temporarily unavailable",
+    "service unavailable",
+    "gateway",
+    "upstream",
+    "500",
+    "502",
+    "503",
+    "504",
+)
 
 
 class LoginResult(str, Enum):
@@ -61,6 +79,25 @@ class LoginResult(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     CAPTCHA_REQUIRED = "captcha_required"
+
+
+@dataclass
+class FreshCookieResult:
+    """Structured addon response used by /login contract."""
+
+    cookies: Optional[str] = None
+    category: Optional[str] = None
+    subreason: Optional[str] = None
+    error: Optional[str] = None
+    captcha_required: bool = False
+
+
+def _is_transient_site_error_message(message: str | None) -> bool:
+    """Best-effort classifier for transient upstream site failures."""
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in _TRANSIENT_ERROR_MARKERS)
 
 
 class PSEGAutoLogin:
@@ -80,6 +117,21 @@ class PSEGAutoLogin:
         self.playwright = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self.last_failure_category: Optional[str] = None
+        self.last_failure_subreason: Optional[str] = None
+        self.last_failure_error: Optional[str] = None
+
+    def _set_failure(
+        self,
+        category: Optional[str],
+        *,
+        error: Optional[str] = None,
+        subreason: Optional[str] = None,
+    ) -> None:
+        """Record structured failure context for caller-facing response mapping."""
+        self.last_failure_category = category
+        self.last_failure_subreason = subreason
+        self.last_failure_error = error
 
     async def _launch_context(self) -> bool:
         """Launch Playwright and persistent context. Returns True on success."""
@@ -224,6 +276,8 @@ class PSEGAutoLogin:
         Returns:
             Tuple of (LoginResult, cookie_string_or_None)
         """
+        self._set_failure(None)
+
         # Track the login AJAX response
         login_response = {}
 
@@ -302,11 +356,18 @@ class PSEGAutoLogin:
 
                 if "captcha" in error_msg.lower():
                     _LOGGER.warning("CAPTCHA challenge required — manual intervention needed")
+                    self._set_failure(CATEGORY_CAPTCHA_REQUIRED, error=error_msg)
                     record_captcha()
                     return LoginResult.CAPTCHA_REQUIRED, None
 
                 if error_msg:
                     _LOGGER.error("Login failed: %s", error_msg)
+                    category = (
+                        CATEGORY_TRANSIENT_SITE_ERROR
+                        if _is_transient_site_error_message(error_msg)
+                        else CATEGORY_INVALID_CREDENTIALS
+                    )
+                    self._set_failure(category, error=error_msg)
                     record_profile_failed()
                     return LoginResult.FAILED, None
 
@@ -326,10 +387,24 @@ class PSEGAutoLogin:
                         _LOGGER.warning(
                             "CAPTCHA challenge likely pending (no login API response, recaptcha iframe present)"
                         )
+                        self._set_failure(
+                            CATEGORY_CAPTCHA_REQUIRED,
+                            error="CAPTCHA challenge likely pending",
+                        )
                         await self._log_login_failure_context(login_response)
                         record_captcha()
                         return LoginResult.CAPTCHA_REQUIRED, None
-                await self._log_login_failure_context(login_response)
+                subreason = "site_flow_changed" if not login_response else None
+                self._set_failure(
+                    CATEGORY_UNKNOWN_RUNTIME_ERROR,
+                    error="Login failed — still on login page",
+                    subreason=subreason,
+                )
+                await self._log_login_failure_context(
+                    login_response,
+                    category=CATEGORY_UNKNOWN_RUNTIME_ERROR,
+                    subreason=subreason,
+                )
                 record_profile_failed()
                 return LoginResult.FAILED, None
 
@@ -341,11 +416,22 @@ class PSEGAutoLogin:
                 return LoginResult.SUCCESS, cookie_str
 
             _LOGGER.warning("Login appeared to succeed but no cookies found")
+            self._set_failure(
+                CATEGORY_UNKNOWN_RUNTIME_ERROR,
+                error="Login appeared to succeed but no cookies were found",
+            )
             record_profile_failed()
             return LoginResult.FAILED, None
 
         except Exception as e:
             _LOGGER.error("Login error: %s", e)
+            category = (
+                CATEGORY_TRANSIENT_SITE_ERROR
+                if isinstance(e, asyncio.TimeoutError)
+                or _is_transient_site_error_message(str(e))
+                else CATEGORY_UNKNOWN_RUNTIME_ERROR
+            )
+            self._set_failure(category, error=str(e))
             record_profile_failed()
             return LoginResult.FAILED, None
         finally:
@@ -402,13 +488,17 @@ class PSEGAutoLogin:
 
         if category is None:
             if api_error and "captcha" in str(api_error).lower():
-                category = "captcha_required"
+                category = CATEGORY_CAPTCHA_REQUIRED
             elif api_error:
-                category = "invalid_credentials"
+                category = (
+                    CATEGORY_TRANSIENT_SITE_ERROR
+                    if _is_transient_site_error_message(str(api_error))
+                    else CATEGORY_INVALID_CREDENTIALS
+                )
             elif has_recaptcha_iframe:
-                category = "captcha_required"
+                category = CATEGORY_CAPTCHA_REQUIRED
             else:
-                category = "unknown_runtime_error"
+                category = CATEGORY_UNKNOWN_RUNTIME_ERROR
                 if subreason is None:
                     subreason = "site_flow_changed"
 
@@ -467,6 +557,10 @@ class PSEGAutoLogin:
         """
         try:
             if not await self.setup_browser():
+                self._set_failure(
+                    CATEGORY_UNKNOWN_RUNTIME_ERROR,
+                    error="Browser setup failed",
+                )
                 return None
 
             # Optional warm-up after fresh/rotated profile (Phase D)
@@ -479,11 +573,16 @@ class PSEGAutoLogin:
             if result == LoginResult.CAPTCHA_REQUIRED:
                 return CAPTCHA_REQUIRED_SENTINEL
             if result == LoginResult.SUCCESS:
+                self._set_failure(None)
                 return cookies
             return None
 
         except Exception as e:
             _LOGGER.error("Error getting cookies: %s", e)
+            self._set_failure(
+                CATEGORY_UNKNOWN_RUNTIME_ERROR,
+                error=str(e),
+            )
             return None
         finally:
             await self.cleanup()
@@ -515,8 +614,9 @@ async def get_fresh_cookies(
     username: str,
     password: str,
     headless: bool = True,
+    include_failure_details: bool = False,
     **kwargs,
-) -> Optional[str]:
+) -> Optional[str] | FreshCookieResult:
     """
     Get fresh PSEG cookies via mysmartenergy login.
 
@@ -525,7 +625,29 @@ async def get_fresh_cookies(
     """
     _LOGGER.info("Login attempt for user: %s", username)
     login = PSEGAutoLogin(email=username, password=password, headless=headless)
-    return await login.get_cookies()
+    result = await login.get_cookies()
+
+    if not include_failure_details:
+        return result
+
+    if result == CAPTCHA_REQUIRED_SENTINEL:
+        return FreshCookieResult(
+            cookies=None,
+            category=CATEGORY_CAPTCHA_REQUIRED,
+            subreason=login.last_failure_subreason,
+            error=login.last_failure_error,
+            captcha_required=True,
+        )
+    if result:
+        return FreshCookieResult(cookies=result)
+
+    return FreshCookieResult(
+        cookies=None,
+        category=login.last_failure_category or CATEGORY_UNKNOWN_RUNTIME_ERROR,
+        subreason=login.last_failure_subreason,
+        error=login.last_failure_error or "Login failed",
+        captcha_required=False,
+    )
 
 
 # --- CLI for standalone testing ---

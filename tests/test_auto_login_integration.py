@@ -11,6 +11,7 @@ from custom_components.psegli.auto_login import (
     CATEGORY_ADDON_DISCONNECT,
     CATEGORY_CAPTCHA_REQUIRED,
     CATEGORY_INVALID_CREDENTIALS,
+    CATEGORY_TRANSIENT_SITE_ERROR,
     CATEGORY_UNKNOWN_ERROR,
     LoginResult,
     get_fresh_cookies,
@@ -72,6 +73,38 @@ class TestAttemptLogin:
         assert isinstance(result, LoginResult)
         assert result.cookies is None
         assert result.category == CATEGORY_INVALID_CREDENTIALS
+
+    @pytest.mark.asyncio
+    async def test_returns_transient_site_error_when_addon_provides_category(self):
+        """Addon-provided transient category should map directly without auth-failure conflation."""
+        resp = _mock_response(
+            200,
+            {
+                "success": False,
+                "error": "Upstream site unavailable",
+                "category": "transient_site_error",
+            },
+        )
+        result = await _attempt_login(_mock_session(resp), {"username": "u", "password": "p"})
+        assert isinstance(result, LoginResult)
+        assert result.cookies is None
+        assert result.category == CATEGORY_TRANSIENT_SITE_ERROR
+
+    @pytest.mark.asyncio
+    async def test_unknown_addon_category_maps_to_unknown_error(self):
+        """Any non-canonical addon category should safely map to unknown_runtime_error."""
+        resp = _mock_response(
+            200,
+            {
+                "success": False,
+                "error": "Some new category",
+                "category": "new_category_not_known",
+            },
+        )
+        result = await _attempt_login(_mock_session(resp), {"username": "u", "password": "p"})
+        assert isinstance(result, LoginResult)
+        assert result.cookies is None
+        assert result.category == CATEGORY_UNKNOWN_ERROR
 
     @pytest.mark.asyncio
     async def test_raises_on_5xx(self):

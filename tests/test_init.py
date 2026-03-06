@@ -64,6 +64,7 @@ from custom_components.psegli.auto_login import (
     LoginResult,
     CATEGORY_ADDON_UNREACHABLE,
     CATEGORY_CAPTCHA_REQUIRED,
+    CATEGORY_TRANSIENT_SITE_ERROR,
     CATEGORY_UNKNOWN_ERROR,
 )
 from custom_components.psegli.const import (
@@ -815,6 +816,36 @@ class TestSignalTracking:
             == CATEGORY_ADDON_UNREACHABLE
         )
         assert mock_hass.data[DOMAIN][_SIGNAL_LAST_REFRESH_REASON] == "manual_service"
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock, return_value=True)
+    async def test_transient_site_error_notification_uses_retry_guidance(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Transient upstream failures should guide users to retry, not reset credentials/cookies."""
+        mock_fresh.return_value = LoginResult(cookies=None, category=CATEGORY_TRANSIENT_SITE_ERROR)
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+        await handler(MagicMock(data={}))
+
+        notifications = [
+            call
+            for call in mock_hass.services.async_call.call_args_list
+            if call.args[0] == "persistent_notification"
+            and call.args[1] == "create"
+            and call.args[2].get("notification_id") == "psegli_cookie_refresh_failed"
+        ]
+        assert notifications
+        message = notifications[-1].args[2]["message"]
+        assert "wait and retry" in message.lower()
+        assert "provide a cookie manually" not in message.lower()
 
     @patch("custom_components.psegli.PSEGLIClient")
     @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)

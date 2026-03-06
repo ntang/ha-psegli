@@ -145,6 +145,30 @@ class TestFastAPIEndpoints:
                 assert data["success"] is False
 
     @pytest.mark.asyncio
+    async def test_login_failure_exposes_structured_category(self):
+        """Task 1: login endpoint should propagate addon failure category/subreason."""
+        with patch("run.get_fresh_cookies", new_callable=AsyncMock) as mock_login:
+            mock_login.return_value = {
+                "cookies": None,
+                "category": "transient_site_error",
+                "subreason": "upstream_503",
+                "error": "Upstream site unavailable",
+                "captcha_required": False,
+            }
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post("/login", json={
+                    "username": "test@example.com",
+                    "password": "testpass",
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert data["category"] == "transient_site_error"
+        assert data["subreason"] == "upstream_503"
+
+    @pytest.mark.asyncio
     async def test_concurrent_login_serialized(self):
         """Two concurrent /login calls should be serialized by the lock."""
         import asyncio
