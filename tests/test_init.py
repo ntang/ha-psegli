@@ -12,8 +12,11 @@ from custom_components.psegli import (
     async_unload_entry,
     async_update_options,
     _get_active_entry,
+    _get_status_signals,
+    _is_task_pending,
     get_last_cumulative_kwh,
     _CAPTCHA_RETRY_TASK,
+    _LAST_EXPIRY_WARNING_AT,
     _SIGNAL_LAST_AUTH_PROBE_AT,
     _SIGNAL_LAST_AUTH_PROBE_RESULT,
     _SIGNAL_LAST_REFRESH_ATTEMPT_AT,
@@ -884,6 +887,8 @@ class TestSignalTracking:
             "last_successful_update_at",
             "last_successful_datapoint_at",
             "cookie_age_seconds",
+            "captcha_retry_pending",
+            "last_expiry_warning_at",
         }
         assert set(result.keys()) == expected_keys
         # Cookie age should be computed since we recorded it during setup
@@ -1174,3 +1179,56 @@ class TestProactiveRefreshAndExpiryWarning:
         cookie_age = datetime.now(tz=timezone.utc) - obtained_at
         assert cookie_age >= warning_age
         assert cookie_age < max_age
+
+
+# ---------------------------------------------------------------------------
+# Status signals include Phase C+E fields
+# ---------------------------------------------------------------------------
+
+class TestStatusSignals:
+    """Tests for _get_status_signals and _is_task_pending."""
+
+    def test_is_task_pending_none(self):
+        """None task is not pending."""
+        assert _is_task_pending(None) is False
+
+    def test_is_task_pending_done_task(self):
+        """Completed task is not pending."""
+        task = MagicMock()
+        task.done.return_value = True
+        assert _is_task_pending(task) is False
+
+    def test_is_task_pending_running_task(self):
+        """Running task is pending."""
+        task = MagicMock()
+        task.done.return_value = False
+        assert _is_task_pending(task) is True
+
+    def test_status_signals_include_captcha_retry_pending(self):
+        """Status signals include captcha_retry_pending field."""
+        domain_data = {}
+        signals = _get_status_signals(domain_data)
+        assert "captcha_retry_pending" in signals
+        assert signals["captcha_retry_pending"] is False
+
+    def test_status_signals_captcha_retry_pending_true(self):
+        """captcha_retry_pending is True when task is running."""
+        task = MagicMock()
+        task.done.return_value = False
+        domain_data = {_CAPTCHA_RETRY_TASK: task}
+        signals = _get_status_signals(domain_data)
+        assert signals["captcha_retry_pending"] is True
+
+    def test_status_signals_include_last_expiry_warning_at(self):
+        """Status signals include last_expiry_warning_at field."""
+        domain_data = {}
+        signals = _get_status_signals(domain_data)
+        assert "last_expiry_warning_at" in signals
+        assert signals["last_expiry_warning_at"] is None
+
+    def test_status_signals_last_expiry_warning_at_set(self):
+        """last_expiry_warning_at is ISO formatted when set."""
+        now = datetime.now(tz=timezone.utc)
+        domain_data = {_LAST_EXPIRY_WARNING_AT: now}
+        signals = _get_status_signals(domain_data)
+        assert signals["last_expiry_warning_at"] == now.isoformat()

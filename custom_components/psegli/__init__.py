@@ -116,6 +116,11 @@ def _record_cookie_obtained(hass: HomeAssistant) -> None:
     hass.data.setdefault(DOMAIN, {})[_COOKIE_OBTAINED_AT] = datetime.now(tz=timezone.utc)
 
 
+def _is_task_pending(task: asyncio.Task | None) -> bool:
+    """Return True if the task exists and has not finished."""
+    return task is not None and not task.done()
+
+
 def _get_status_signals(domain_data: dict[str, Any]) -> dict[str, Any]:
     """Build the signal snapshot payload shared by service + diagnostics."""
 
@@ -144,6 +149,8 @@ def _get_status_signals(domain_data: dict[str, Any]) -> dict[str, Any]:
             domain_data.get(_SIGNAL_LAST_SUCCESSFUL_DATAPOINT_AT)
         ),
         "cookie_age_seconds": cookie_age,
+        "captcha_retry_pending": _is_task_pending(domain_data.get(_CAPTCHA_RETRY_TASK)),
+        "last_expiry_warning_at": _iso(domain_data.get(_LAST_EXPIRY_WARNING_AT)),
     }
 
 
