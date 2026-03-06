@@ -1,4 +1,5 @@
 """Config flow for PSEG Long Island integration."""
+import asyncio
 import logging
 import voluptuous as vol
 
@@ -43,7 +44,7 @@ async def _run_preflight(hass: HomeAssistant, addon_url: str) -> dict[str, str]:
     Does not block setup; allows continuation with clear status.
     """
     try:
-        healthy = await check_addon_health(addon_url)
+        healthy = await asyncio.wait_for(check_addon_health(addon_url), timeout=2)
         if healthy:
             return {
                 "preflight_status": "ready",
@@ -105,10 +106,12 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                         if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
                             errors["base"] = "captcha_required"
+                            preflight = await _run_preflight(self.hass, addon_url)
                             return self.async_show_form(
                                 step_id="user",
                                 data_schema=self._get_schema(),
                                 errors=errors,
+                                description_placeholders=preflight,
                             )
                         elif login_result.cookies:
                             cookie = login_result.cookies
@@ -159,8 +162,11 @@ class PSEGLIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during setup")
                 errors["base"] = "unknown"
 
+        preflight_url = _normalize_addon_url(
+            (user_input or {}).get(CONF_ADDON_URL, DEFAULT_ADDON_URL)
+        )
         # Phase G: run preflight and show status so user sees readiness before submitting
-        preflight = await _run_preflight(self.hass, DEFAULT_ADDON_URL)
+        preflight = await _run_preflight(self.hass, preflight_url)
         return self.async_show_form(
             step_id="user",
             data_schema=self._get_schema(),

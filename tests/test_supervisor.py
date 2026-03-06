@@ -49,6 +49,50 @@ async def test_supervisor_discovery_returns_network_host_port():
 
 
 @pytest.mark.asyncio
+async def test_supervisor_discovery_handles_null_network_with_hostname():
+    """Discovery tolerates network=null and still uses hostname + ingress_port."""
+    response = AsyncMock()
+    response.status = 200
+    response.json = AsyncMock(
+        return_value={
+            "data": {
+                "hostname": "84ee8c30-psegli-automation",
+                "network": None,
+                "ingress_port": 8000,
+            }
+        }
+    )
+
+    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
+        mock_cs.return_value = _mock_client_session(response)
+        url = await async_get_addon_url_from_supervisor(MagicMock())
+
+    assert url == "http://84ee8c30-psegli-automation:8000"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_discovery_extracts_port_from_webui_template():
+    """Discovery parses [PORT:n] from Supervisor webui template."""
+    response = AsyncMock()
+    response.status = 200
+    response.json = AsyncMock(
+        return_value={
+            "data": {
+                "hostname": "84ee8c30-psegli-automation",
+                "network": {},
+                "webui": "http://[HOST]:[PORT:8099]",
+            }
+        }
+    )
+
+    with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
+        mock_cs.return_value = _mock_client_session(response)
+        url = await async_get_addon_url_from_supervisor(MagicMock())
+
+    assert url == "http://84ee8c30-psegli-automation:8099"
+
+
+@pytest.mark.asyncio
 async def test_supervisor_discovery_uses_hostname_with_ports_mapping():
     """Discovery parses hostname + network ports mapping payload shape."""
     response = AsyncMock()
@@ -92,6 +136,37 @@ async def test_supervisor_discovery_normalizes_scheme_host_url():
         url = await async_get_addon_url_from_supervisor(MagicMock())
 
     assert url == "http://84ee8c30-psegli-automation:8000"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_discovery_accepts_supervisor_env_without_scheme():
+    """SUPERVISOR env value without scheme should be normalized to http://."""
+    response = AsyncMock()
+    response.status = 200
+    response.json = AsyncMock(
+        return_value={
+            "data": {
+                "network": {
+                    "host": "84ee8c30-psegli-automation",
+                    "port": 8000,
+                }
+            }
+        }
+    )
+
+    with patch.dict(
+        "custom_components.psegli.supervisor.os.environ",
+        {"SUPERVISOR": "172.30.32.2"},
+        clear=True,
+    ):
+        with patch("custom_components.psegli.supervisor.aiohttp.ClientSession") as mock_cs:
+            mock_cs.return_value = _mock_client_session(response)
+            await async_get_addon_url_from_supervisor(MagicMock())
+
+    session = mock_cs.return_value.__aenter__.return_value
+    session.get.assert_called_once()
+    called_url = session.get.call_args.args[0]
+    assert called_url.startswith("http://172.30.32.2/")
 
 
 @pytest.mark.asyncio

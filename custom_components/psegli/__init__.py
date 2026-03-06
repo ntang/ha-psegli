@@ -71,11 +71,13 @@ _AUTH_FAILURE_NOTIFICATION_COOLDOWN = timedelta(hours=24)
 _SUPERVISOR_DISCOVERED_ADDON_URL = "_supervisor_discovered_addon_url"
 _SUPERVISOR_DISCOVERED_ADDON_URL_AT = "_supervisor_discovered_addon_url_at"
 _SUPERVISOR_DISCOVERY_TTL = timedelta(seconds=60)
+_OPTION_ADDON_URL_AUTO = "_addon_url_auto"
 
 # Add-on transport circuit breaker state
 _ADDON_TRANSPORT_FAILURE_COUNT = "_addon_transport_failure_count"
 _ADDON_CIRCUIT_OPEN_UNTIL = "_addon_circuit_open_until"
 _ADDON_CIRCUIT_OPEN_FOR_URL = "_addon_circuit_open_for_url"
+_ADDON_LAST_FAILURE_URL = "_addon_last_failure_url"
 _LAST_ADDON_UNREACHABLE_NOTIFICATION_AT = "_last_addon_unreachable_notification_at"
 _LAST_WORKING_ADDON_URL = "_last_working_addon_url"
 _ADDON_CIRCUIT_OPEN_THRESHOLD = 3
@@ -188,6 +190,11 @@ def _get_configured_addon_url(entry: ConfigEntry | None) -> str:
     return DEFAULT_ADDON_URL.rstrip("/")
 
 
+def _is_auto_managed_addon_url(entry: ConfigEntry | None) -> bool:
+    """Return True when addon_url option is integration-managed discovery output."""
+    return bool(entry and entry.options.get(_OPTION_ADDON_URL_AUTO))
+
+
 async def _get_cached_supervisor_addon_url(hass: HomeAssistant) -> str | None:
     """Return Supervisor-discovered add-on URL from TTL cache."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -211,7 +218,7 @@ async def _get_addon_url(hass: HomeAssistant, entry: ConfigEntry | None) -> str:
     """Resolve effective addon URL with Supervisor discovery fallback."""
     configured = _get_configured_addon_url(entry)
     default = DEFAULT_ADDON_URL.rstrip("/")
-    if configured != default:
+    if configured != default and not _is_auto_managed_addon_url(entry):
         return configured
 
     discovered = await _get_cached_supervisor_addon_url(hass)
@@ -239,8 +246,9 @@ def _persist_discovered_addon_url(
         return
 
     default = DEFAULT_ADDON_URL.rstrip("/")
+    auto_managed = _is_auto_managed_addon_url(entry)
     # Do not overwrite explicit custom URLs that are non-default.
-    if current != default:
+    if current != default and not auto_managed:
         _LOGGER.debug(
             "Keeping user-configured addon URL %s; discovered %s during %s",
             current,
@@ -249,7 +257,11 @@ def _persist_discovered_addon_url(
         )
         return
 
-    updated_options = {**entry.options, CONF_ADDON_URL: normalized}
+    updated_options = {
+        **entry.options,
+        CONF_ADDON_URL: normalized,
+        _OPTION_ADDON_URL_AUTO: True,
+    }
     hass.config_entries.async_update_entry(entry, options=updated_options)
     _LOGGER.info(
         "Updated addon URL from %s to %s based on successful %s probe",
@@ -485,6 +497,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         domain_data[_ADDON_TRANSPORT_FAILURE_COUNT] = 0
         domain_data.pop(_ADDON_CIRCUIT_OPEN_UNTIL, None)
         domain_data.pop(_ADDON_CIRCUIT_OPEN_FOR_URL, None)
+        domain_data.pop(_ADDON_LAST_FAILURE_URL, None)
+        # Allow fresh notification cycle after successful recovery/URL switch.
+        domain_data.pop(_LAST_ADDON_UNREACHABLE_NOTIFICATION_AT, None)
 
     async def _maybe_notify_addon_unreachable(
         addon_url: str,
@@ -532,8 +547,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         trigger_reason: str,
     ) -> int:
         """Increment transport failure count and open circuit at threshold."""
+        last_failure_url = domain_data.get(_ADDON_LAST_FAILURE_URL)
+        if isinstance(last_failure_url, str) and last_failure_url and last_failure_url != addon_url:
+            _LOGGER.info(
+                "Addon failure URL changed: %s -> %s (%s); resetting transport state",
+                last_failure_url,
+                addon_url,
+                trigger_reason,
+            )
+            _reset_addon_transport_state("addon failure URL changed")
+
         count = domain_data.get(_ADDON_TRANSPORT_FAILURE_COUNT, 0) + 1
         domain_data[_ADDON_TRANSPORT_FAILURE_COUNT] = count
+        domain_data[_ADDON_LAST_FAILURE_URL] = addon_url
 
         _LOGGER.warning(
             "Addon transport failure recorded (%s, category=%s): %d consecutive failures (url=%s)",
@@ -1378,6 +1404,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             domain_data.pop(_ADDON_TRANSPORT_FAILURE_COUNT, None)
             domain_data.pop(_ADDON_CIRCUIT_OPEN_UNTIL, None)
             domain_data.pop(_ADDON_CIRCUIT_OPEN_FOR_URL, None)
+            domain_data.pop(_ADDON_LAST_FAILURE_URL, None)
             domain_data.pop(_LAST_ADDON_UNREACHABLE_NOTIFICATION_AT, None)
             domain_data.pop(_LAST_WORKING_ADDON_URL, None)
 

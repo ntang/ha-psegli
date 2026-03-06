@@ -119,10 +119,12 @@ class TestPSEGLIConfigFlow:
         assert result["type"] == "form"
         assert result["errors"]["base"] == "cannot_connect"
 
+    @patch("custom_components.psegli.config_flow.check_addon_health", new_callable=AsyncMock)
     @patch("custom_components.psegli.config_flow.get_fresh_cookies", new_callable=AsyncMock)
-    async def test_user_step_captcha_shows_error(self, mock_fresh, mock_hass):
+    async def test_user_step_captcha_shows_error(self, mock_fresh, mock_health, mock_hass):
         """CAPTCHA from addon shows captcha_required error."""
         mock_fresh.return_value = LoginResult(category=CATEGORY_CAPTCHA_REQUIRED)
+        mock_health.return_value = True
 
         flow = _make_config_flow(mock_hass)
         result = await flow.async_step_user({
@@ -132,6 +134,7 @@ class TestPSEGLIConfigFlow:
 
         assert result["type"] == "form"
         assert result["errors"]["base"] == "captcha_required"
+        assert result["description_placeholders"]["preflight_status"] == "ready"
 
     @patch("custom_components.psegli.config_flow.PSEGLIClient")
     @patch("custom_components.psegli.config_flow.get_fresh_cookies", new_callable=AsyncMock)
@@ -198,6 +201,32 @@ class TestPSEGLIConfigFlow:
         assert result["description_placeholders"]["preflight_status"] == "unreachable"
         assert "not reachable" in result["description_placeholders"]["preflight_message"]
         assert "Install and start" in result["description_placeholders"]["preflight_message"]
+
+    @patch("custom_components.psegli.config_flow.check_addon_health", new_callable=AsyncMock)
+    @patch("custom_components.psegli.config_flow.PSEGLIClient")
+    async def test_user_step_preflight_uses_submitted_addon_url_on_form_rerender(
+        self, mock_client_cls, mock_health, mock_hass
+    ):
+        """Preflight should evaluate the user-submitted addon URL on rerender."""
+        custom_url = "http://my-addon-host:8000"
+        mock_health.return_value = False
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(side_effect=InvalidAuth("bad cookie"))
+        mock_client_cls.return_value = mock_client
+
+        flow = _make_config_flow(mock_hass)
+        result = await flow.async_step_user(
+            {
+                CONF_USERNAME: "user@example.com",
+                CONF_PASSWORD: "pass",
+                CONF_COOKIE: "MM_SID=bad",
+                CONF_ADDON_URL: custom_url,
+            }
+        )
+
+        assert result["type"] == "form"
+        assert result["errors"]["base"] == "invalid_auth"
+        mock_health.assert_awaited_with(custom_url)
 
     async def test_single_instance_enforcement(self, mock_hass):
         """Second config flow is aborted by unique ID."""

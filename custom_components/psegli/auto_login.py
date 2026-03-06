@@ -145,8 +145,10 @@ async def get_addon_profile_status(addon_url: Optional[str] = None) -> Optional[
             async with session.get(status_url) as resp:
                 if resp.status == 200:
                     return await resp.json()
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        pass
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        logger.debug("Addon profile-status unavailable or invalid JSON: %s", status_url)
+    except Exception as err:  # pragma: no cover - defensive
+        logger.debug("Unexpected profile-status error from %s: %s", status_url, err)
     return None
 
 

@@ -80,7 +80,7 @@ async def health_check():
 async def profile_status():
     """Profile status for Phase D: profile_created_at, last_success, captcha count, size, warmup_state."""
     profile_dir = get_effective_profile_dir()
-    return get_profile_status(profile_dir)
+    return await asyncio.to_thread(get_profile_status, profile_dir)
 
 
 @app.post("/login", response_model=LoginResponse)

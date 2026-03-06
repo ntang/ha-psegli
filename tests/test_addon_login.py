@@ -314,3 +314,71 @@ class TestPSEGAutoLogin:
 
         assert result is True
         assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_setup_browser_retries_without_rotation_on_non_corruption_error(
+        self, mock_playwright, tmp_path
+    ):
+        """Transient launch failures should retry once without rotating profile."""
+        pw, context, _page = mock_playwright
+        login = PSEGAutoLogin(
+            email="test@example.com",
+            password="testpass",
+            profile_dir=str(tmp_path / "profile"),
+        )
+        os.makedirs(login.profile_dir, exist_ok=True)
+        call_count = 0
+
+        async def launch_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Temporary launch failure")
+            return context
+
+        pw.chromium = MagicMock()
+        pw.chromium.launch_persistent_context = AsyncMock(side_effect=launch_side_effect)
+
+        with patch("auto_login.async_playwright") as mock_ap:
+            mock_ap.return_value.start = AsyncMock(return_value=pw)
+            with patch("auto_login.Stealth") as mock_stealth:
+                mock_stealth.return_value.apply_stealth_async = AsyncMock()
+            with patch.object(login, "_rotate_profile_dir") as mock_rotate:
+                result = await login.setup_browser()
+
+        assert result is True
+        assert call_count == 2
+        mock_rotate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warmup_failure_sets_failed_state(self):
+        """Warm-up should mark failed when navigation errors."""
+        login = _make_login_instance()
+        login.page = AsyncMock()
+        login.page.goto = AsyncMock(side_effect=RuntimeError("warmup failed"))
+
+        with patch("auto_login.set_warmup_state") as mock_set_state:
+            ok = await login._warmup_profile()
+
+        assert ok is False
+        assert mock_set_state.call_args_list[0].args[0] == "warming"
+        assert mock_set_state.call_args_list[-1].args[0] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_get_cookies_attempts_warmup_when_profile_state_failed(self):
+        """Failed warm-up state should trigger another warm-up attempt."""
+        login = _make_login_instance()
+        login.page = AsyncMock()
+
+        with patch.object(login, "setup_browser", new=AsyncMock(return_value=True)):
+            with patch("auto_login.load_profile_state", return_value={"warmup_state": "failed"}):
+                with patch.object(login, "_warmup_profile", new=AsyncMock(return_value=True)) as mock_warmup:
+                    with patch.object(
+                        login,
+                        "login",
+                        new=AsyncMock(return_value=(LoginResult.SUCCESS, "MM_SID=test_cookie")),
+                    ):
+                        result = await login.get_cookies()
+
+        assert result == "MM_SID=test_cookie"
+        mock_warmup.assert_awaited_once()

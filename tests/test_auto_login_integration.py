@@ -343,3 +343,27 @@ class TestGetFreshCookiesRetry:
             result = await get_addon_profile_status("http://localhost:8000")
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_addon_profile_status_returns_none_on_invalid_json(self):
+        """Invalid JSON response should not break refresh flow."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(side_effect=ValueError("invalid json"))
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_resp),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "custom_components.psegli.auto_login.aiohttp.ClientSession",
+            return_value=mock_session,
+        ):
+            result = await get_addon_profile_status("http://localhost:8000")
+
+        assert result is None

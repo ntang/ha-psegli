@@ -33,6 +33,7 @@ from profile_state import (
     WARMUP_READY,
     WARMUP_WARMING,
     WARMUP_IDLE,
+    WARMUP_FAILED,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,20 +126,38 @@ class PSEGAutoLogin:
             _LOGGER.warning("Could not rotate profile dir %s: %s", self.profile_dir, e)
         record_profile_created()
 
-    async def _warmup_profile(self) -> None:
+    def _should_rotate_profile_for_launch_error(self, err: Exception) -> bool:
+        """Best-effort classifier for profile-corruption launch failures."""
+        msg = f"{type(err).__name__}: {err}".lower()
+        rotate_markers = (
+            "profile",
+            "user data dir",
+            "user_data_dir",
+            "database is malformed",
+            "corrupt",
+            "sqlite",
+            "lock",
+        )
+        return any(marker in msg for marker in rotate_markers)
+
+    async def _warmup_profile(self) -> bool:
         """Single trust-building visit to login page (no credentials)."""
         set_warmup_state(WARMUP_WARMING)
         try:
             _LOGGER.info("Warming up profile: visiting login page")
             await self.page.goto(LOGIN_URL, wait_until="domcontentloaded")
             await asyncio.sleep(1)
+            set_warmup_state(WARMUP_READY)
+            return True
         except Exception as e:
             _LOGGER.debug("Warm-up visit failed (non-fatal): %s", e)
-        set_warmup_state(WARMUP_READY)
+            set_warmup_state(WARMUP_FAILED)
+            return False
 
     async def setup_browser(self) -> bool:
         """Initialize Playwright with persistent profile. Rotate on corruption and retry once."""
         _LOGGER.info("Initializing Playwright browser...")
+        rotated_profile = False
         for attempt in (1, 2):
             try:
                 if await self._launch_context():
@@ -147,12 +166,24 @@ class PSEGAutoLogin:
             except Exception as e:
                 _LOGGER.warning("Browser setup attempt %d failed: %s", attempt, e)
                 await self.cleanup()
-                if attempt == 1:
+                should_rotate = (
+                    attempt == 1
+                    and not rotated_profile
+                    and self._should_rotate_profile_for_launch_error(e)
+                )
+                if should_rotate:
                     record_profile_failed()
                     self._rotate_profile_dir()
-                else:
-                    _LOGGER.error("Failed to setup browser after rotate: %s", e)
-                    return False
+                    rotated_profile = True
+                    continue
+                if attempt == 1:
+                    _LOGGER.warning(
+                        "Retrying browser setup without profile rotation (error not classified as corruption)"
+                    )
+                    continue
+                record_profile_failed()
+                _LOGGER.error("Failed to setup browser after retry: %s", e)
+                return False
         return False
 
     async def login(self) -> tuple[LoginResult, Optional[str]]:
@@ -375,7 +406,7 @@ class PSEGAutoLogin:
 
             # Optional warm-up after fresh/rotated profile (Phase D)
             state = load_profile_state()
-            if state.get("warmup_state") == WARMUP_IDLE and self.page:
+            if state.get("warmup_state") in (WARMUP_IDLE, WARMUP_FAILED) and self.page:
                 await self._warmup_profile()
 
             result, cookies = await self.login()
