@@ -57,10 +57,12 @@ from custom_components.psegli import (
     _ADDON_CIRCUIT_OPEN_UNTIL,
     _ADDON_CIRCUIT_OPEN_FOR_URL,
     _LAST_ADDON_UNREACHABLE_NOTIFICATION_AT,
+    _LAST_WORKING_ADDON_URL,
     OPTION_ADDON_URL_AUTO,
     _compute_incremental_days_back,
 )
 from custom_components.psegli.auto_login import (
+    CATEGORY_ADDON_DISCONNECT,
     LoginResult,
     CATEGORY_ADDON_UNREACHABLE,
     CATEGORY_CAPTCHA_REQUIRED,
@@ -1072,6 +1074,48 @@ class TestSignalTracking:
             and call.args[2].get("notification_id") == "psegli_addon_unreachable"
         ]
         assert len(notifications) == 1
+
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock, return_value=True)
+    async def test_addon_unreachable_notification_uses_last_attempted_url_context(
+        self, mock_health, mock_fresh, mock_client_cls, mock_hass, mock_config_entry
+    ):
+        """Repeated transport failures should notify using the actual failing addon URL context."""
+        configured_url = "http://localhost:8000"
+        attempted_url = "http://84ee8c30-psegli-automation:8000"
+        mock_config_entry.options = {CONF_ADDON_URL: configured_url}
+        mock_fresh.return_value = LoginResult(
+            cookies=None,
+            category=CATEGORY_ADDON_DISCONNECT,
+            addon_url=attempted_url,
+        )
+        mock_client = MagicMock()
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client_cls.return_value = mock_client
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        mock_hass.data[DOMAIN][_LAST_WORKING_ADDON_URL] = "http://working-addon:8000"
+        handler = _get_registered_service_handler(mock_hass, "refresh_cookie")
+
+        await handler(MagicMock(data={}))
+        await handler(MagicMock(data={}))
+        await handler(MagicMock(data={}))
+
+        notifications = [
+            call
+            for call in mock_hass.services.async_call.call_args_list
+            if call.args[0] == "persistent_notification"
+            and call.args[1] == "create"
+            and call.args[2].get("notification_id") == "psegli_addon_unreachable"
+        ]
+        assert len(notifications) == 1
+        message = notifications[0].args[2]["message"]
+        assert f"Active URL: {attempted_url}" in message
+        assert f"Last known working URL: http://working-addon:8000" in message
+        assert configured_url not in message
 
     @patch("custom_components.psegli.PSEGLIClient")
     @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)

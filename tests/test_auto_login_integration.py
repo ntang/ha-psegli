@@ -187,6 +187,21 @@ class TestGetFreshCookiesRetry:
         assert result.category == CATEGORY_ADDON_DISCONNECT
         assert mock_attempt.call_count == _MAX_LOGIN_RETRIES
         assert mock_sleep.call_count == _MAX_LOGIN_RETRIES - 1
+        assert result.addon_url is None
+
+    @pytest.mark.asyncio
+    @patch("custom_components.psegli.auto_login._attempt_login", new_callable=AsyncMock)
+    @patch("custom_components.psegli.auto_login.asyncio.sleep", new_callable=AsyncMock)
+    async def test_exhausts_retries_reports_last_attempted_addon_url(
+        self, mock_sleep, mock_attempt
+    ):
+        """Transport exhaustion should retain the last attempted addon URL for observability."""
+        mock_attempt.side_effect = aiohttp.ServerDisconnectedError("Server disconnected")
+
+        result = await get_fresh_cookies("user", "pass", addon_url="http://localhost:8000")
+
+        assert result.category == CATEGORY_ADDON_DISCONNECT
+        assert result.addon_url == "http://84ee8c30_psegli-automation:8000"
 
     @pytest.mark.asyncio
     @patch("custom_components.psegli.auto_login._attempt_login", new_callable=AsyncMock)

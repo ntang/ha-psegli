@@ -430,12 +430,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     password,
                     addon_url=addon_url,
                 )
-                _persist_discovered_addon_url(
-                    hass,
-                    entry,
-                    login_result.addon_url,
-                    "setup",
-                )
+                if login_result.cookies:
+                    _persist_discovered_addon_url(
+                        hass,
+                        entry,
+                        login_result.addon_url,
+                        "setup",
+                    )
 
                 if login_result.cookies:
                     cookie = login_result.cookies
@@ -842,19 +843,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             password,
             addon_url=addon_url,
         )
-        _persist_discovered_addon_url(
-            hass,
-            active_entry,
-            login_result.addon_url,
-            f"refresh ({trigger_reason})",
-        )
+        if login_result.cookies:
+            _persist_discovered_addon_url(
+                hass,
+                active_entry,
+                login_result.addon_url,
+                f"refresh ({trigger_reason})",
+            )
+        failure_url = login_result.addon_url or addon_url
         if login_result.category == CATEGORY_CAPTCHA_REQUIRED:
             _reset_addon_transport_state("captcha response")
             _LOGGER.warning(
                 "[refresh:%s] reCAPTCHA challenge triggered (%s, url=%s)",
                 attempt_id,
                 trigger_reason,
-                addon_url,
+                failure_url,
             )
             _record_signal(_SIGNAL_LAST_REFRESH_RESULT, "failed")
             _record_signal(
@@ -889,7 +892,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 attempt_id,
                 trigger_reason,
                 login_result.category,
-                addon_url,
+                failure_url,
             )
             if login_result.category in (
                 CATEGORY_ADDON_UNREACHABLE,
@@ -897,7 +900,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ):
                 await _record_addon_transport_failure(
                     login_result.category,
-                    addon_url,
+                    failure_url,
                     trigger_reason,
                 )
             else:

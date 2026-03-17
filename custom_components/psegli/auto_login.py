@@ -385,5 +385,5 @@ async def get_fresh_cookies(
     )
     return LoginResult(
         category=CATEGORY_ADDON_DISCONNECT,
-        addon_url=None,
+        addon_url=attempted_urls[-1] if attempted_urls else None,
     )
