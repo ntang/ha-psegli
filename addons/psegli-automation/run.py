@@ -127,51 +127,62 @@ def _check_auto_disable() -> bool:
     return False
 
 
+def _apply_debug_startup_state(
+    debug_from_config: bool, auto_disable_hours: int
+) -> bool:
+    """Reconcile config debug flag with persisted auto-disable state.
+
+    Returns the effective debug_enabled value after reconciliation.
+    """
+    if debug_from_config:
+        existing = _load_debug_state()
+        if not existing.get("debug_enabled") and existing.get("debug_enabled_at") is not None:
+            # Auto-disable previously fired (state=False but timestamp exists).
+            # Honor the persisted decision: downgrade to INFO without re-arming.
+            root = logging.getLogger()
+            root.setLevel(logging.INFO)
+            for handler in root.handlers:
+                handler.setLevel(logging.INFO)
+            logging.getLogger(__name__).info(
+                "Debug was auto-disabled in a prior run; staying at INFO "
+                "(set debug: false then debug: true to re-arm)"
+            )
+            return False
+        elif not existing.get("debug_enabled"):
+            # First time debug is turned on — record the timestamp
+            _save_debug_state({
+                "debug_enabled": True,
+                "debug_enabled_at": time.time(),
+                "auto_disable_hours": auto_disable_hours,
+            })
+        else:
+            # Debug was already on — update auto_disable_hours if changed
+            if existing.get("auto_disable_hours") != auto_disable_hours:
+                existing["auto_disable_hours"] = auto_disable_hours
+                _save_debug_state(existing)
+        # Check if auto-disable should fire immediately (e.g., after restart)
+        _check_auto_disable()
+        return True
+    else:
+        # Debug is off — clear persisted state entirely so next enable is a fresh cycle
+        existing = _load_debug_state()
+        if existing.get("debug_enabled") or existing.get("debug_enabled_at") is not None:
+            _save_debug_state({
+                "debug_enabled": False,
+                "debug_enabled_at": None,
+                "auto_disable_hours": auto_disable_hours,
+            })
+        return False
+
+
 DEBUG_ENABLED = _load_debug_enabled()
 _AUTO_DISABLE_HOURS = _load_auto_disable_hours()
 LOG_LEVEL = logging.DEBUG if DEBUG_ENABLED else logging.INFO
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
-# Initialize persisted debug state on startup
-if DEBUG_ENABLED:
-    _existing_state = _load_debug_state()
-    if not _existing_state.get("debug_enabled") and _existing_state.get("debug_enabled_at") is not None:
-        # Auto-disable previously fired (state=False but timestamp exists).
-        # Honor the persisted decision: downgrade to INFO without re-arming.
-        DEBUG_ENABLED = False
-        LOG_LEVEL = logging.INFO
-        logging.getLogger().setLevel(logging.INFO)
-        for _h in logging.getLogger().handlers:
-            _h.setLevel(logging.INFO)
-        logger.info(
-            "Debug was auto-disabled in a prior run; staying at INFO "
-            "(set debug: false then debug: true to re-arm)"
-        )
-    elif not _existing_state.get("debug_enabled"):
-        # First time debug is turned on — record the timestamp
-        _save_debug_state({
-            "debug_enabled": True,
-            "debug_enabled_at": time.time(),
-            "auto_disable_hours": _AUTO_DISABLE_HOURS,
-        })
-    else:
-        # Debug was already on — update auto_disable_hours if changed
-        if _existing_state.get("auto_disable_hours") != _AUTO_DISABLE_HOURS:
-            _existing_state["auto_disable_hours"] = _AUTO_DISABLE_HOURS
-            _save_debug_state(_existing_state)
-    # Check if auto-disable should fire immediately (e.g., after restart)
-    if DEBUG_ENABLED:
-        _check_auto_disable()
-else:
-    # Debug is off — clear persisted state entirely so next enable is a fresh cycle
-    _existing_state = _load_debug_state()
-    if _existing_state.get("debug_enabled") or _existing_state.get("debug_enabled_at") is not None:
-        _save_debug_state({
-            "debug_enabled": False,
-            "debug_enabled_at": None,
-            "auto_disable_hours": _AUTO_DISABLE_HOURS,
-        })
+# Reconcile config toggle with persisted auto-disable state
+DEBUG_ENABLED = _apply_debug_startup_state(DEBUG_ENABLED, _AUTO_DISABLE_HOURS)
 
 app = FastAPI(title="PSEG Long Island Automation", version="2.5.1.3")
 

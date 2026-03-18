@@ -306,59 +306,61 @@ class TestDebugAutoDisable:
     async def test_restart_after_auto_disable_stays_at_info(self):
         """Restart with debug:true after auto-disable should NOT re-enable debug.
 
-        When persisted state has debug_enabled=False but debug_enabled_at is set,
-        the auto-disable decision is authoritative across restarts.
+        _apply_debug_startup_state must return False when persisted state shows
+        auto-disable already fired (debug_enabled=False, debug_enabled_at set).
         """
-        # Simulate the state after auto-disable fired: debug_enabled=False
-        # but debug_enabled_at still has the original timestamp
+        from run import _apply_debug_startup_state
+
         prior_state = {
             "debug_enabled": False,
             "debug_enabled_at": time.time() - (25 * 3600),
             "auto_disable_hours": 24,
         }
 
-        # _load_debug_enabled returns True (options say debug: true)
-        # but _load_debug_state returns the auto-disabled state
-        with patch("run._load_debug_enabled", return_value=True), \
-             patch("run._load_debug_state", return_value=prior_state), \
+        with patch("run._load_debug_state", return_value=prior_state), \
              patch("run._save_debug_state") as mock_save:
-            # Re-import to trigger module-level startup logic
-            # Instead, directly test the logic path
-            import run
+            result = _apply_debug_startup_state(debug_from_config=True, auto_disable_hours=24)
 
-            # The key invariant: if debug_enabled=False and debug_enabled_at
-            # is not None, the startup path should NOT write debug_enabled=True
-            # Verify _save_debug_state was NOT called with debug_enabled=True
-            if mock_save.called:
-                for call in mock_save.call_args_list:
-                    saved_state = call[0][0]
-                    assert saved_state.get("debug_enabled") is not True, (
-                        "Restart after auto-disable must not re-arm debug"
-                    )
+        assert result is False, "Restart after auto-disable must not re-arm debug"
+        mock_save.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fresh_debug_cycle_after_toggle_off_and_on(self):
         """Toggling debug off then on should start a fresh auto-disable cycle.
 
-        When debug is turned off (debug: false), the persisted state should
-        clear debug_enabled_at to None. When turned back on, a new timestamp
-        is recorded.
+        When debug is turned off, _apply_debug_startup_state clears
+        debug_enabled_at. When turned back on, a new timestamp is recorded.
         """
-        from run import _load_debug_state, _save_debug_state
+        from run import _apply_debug_startup_state
 
-        # State when debug is turned off: debug_enabled_at should be None
+        # Step 1: debug turned off — clears debug_enabled_at
+        auto_disabled_state = {
+            "debug_enabled": False,
+            "debug_enabled_at": time.time() - 3600,
+            "auto_disable_hours": 24,
+        }
+        with patch("run._load_debug_state", return_value=auto_disabled_state), \
+             patch("run._save_debug_state") as mock_save:
+            result = _apply_debug_startup_state(debug_from_config=False, auto_disable_hours=24)
+
+        assert result is False
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        assert saved["debug_enabled_at"] is None, "debug-off should clear timestamp"
+
+        # Step 2: debug turned back on with cleared state — fresh cycle
         cleared_state = {
             "debug_enabled": False,
             "debug_enabled_at": None,
             "auto_disable_hours": 24,
         }
+        with patch("run._load_debug_state", return_value=cleared_state), \
+             patch("run._save_debug_state") as mock_save2, \
+             patch("run._check_auto_disable", return_value=False):
+            result2 = _apply_debug_startup_state(debug_from_config=True, auto_disable_hours=24)
 
-        # When debug: false → state should have debug_enabled_at: None
-        # (the module-level else branch clears it)
-        assert cleared_state["debug_enabled_at"] is None
-
-        # When debug: true is set again with this cleared state,
-        # it should be treated as "first time" (new timestamp)
-        assert not cleared_state.get("debug_enabled")
-        assert cleared_state.get("debug_enabled_at") is None
-        # This is the "first time debug on" path — not the auto-disable path
+        assert result2 is True, "Fresh enable should return debug=True"
+        mock_save2.assert_called_once()
+        saved2 = mock_save2.call_args[0][0]
+        assert saved2["debug_enabled"] is True
+        assert saved2["debug_enabled_at"] is not None
