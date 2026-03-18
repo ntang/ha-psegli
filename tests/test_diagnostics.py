@@ -115,6 +115,40 @@ async def test_diagnostics_include_artifact_summary_metadata_only(
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_artifact_latest_created_at_uses_parsed_timestamp_order(
+    mock_hass, mock_config_entry
+):
+    """Latest artifact timestamp should be chosen by actual time, not string ordering."""
+    mock_hass.data[DOMAIN] = {}
+    artifact_payload = {
+        "count": 2,
+        "items": [
+            {
+                "id": "1",
+                "created_at": "2026-03-06T12:00:00+00:00",
+                "category": "unknown_runtime_error",
+            },
+            {
+                "id": "2",
+                "created_at": "2026-03-06T08:30:00-05:00",
+                "category": "transient_site_error",
+            },
+        ],
+    }
+
+    with patch(
+        "custom_components.psegli.diagnostics.get_addon_failure_artifacts",
+        new_callable=AsyncMock,
+        return_value=artifact_payload,
+    ):
+        diagnostics = await async_get_config_entry_diagnostics(
+            mock_hass, mock_config_entry
+        )
+
+    assert diagnostics["signals"]["artifact_latest_created_at"] == "2026-03-06T08:30:00-05:00"
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_artifact_summary_falls_back_cleanly_on_endpoint_error(
     mock_hass, mock_config_entry
 ):

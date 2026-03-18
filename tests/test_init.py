@@ -540,6 +540,49 @@ class TestAsyncSetupEntry:
         assert get_usage_calls == 1
         mock_process_chart_data.assert_awaited_once()
 
+    @patch("custom_components.psegli._process_chart_data", new_callable=AsyncMock)
+    @patch("custom_components.psegli.PSEGLIClient")
+    @patch("custom_components.psegli.get_fresh_cookies", new_callable=AsyncMock)
+    @patch("custom_components.psegli.check_addon_health", new_callable=AsyncMock)
+    async def test_overlapping_statistics_updates_coalesce_to_larger_days_back(
+        self,
+        mock_health,
+        mock_fresh,
+        mock_client_cls,
+        mock_process_chart_data,
+        mock_hass,
+        mock_config_entry,
+    ):
+        """Concurrent updates with different windows should honor the larger days_back."""
+        mock_health.return_value = True
+        mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+
+        mock_client = MagicMock()
+        mock_client.cookie = "MM_SID=valid_test_cookie"
+        mock_client.test_connection = MagicMock(return_value=True)
+        mock_client.get_usage_data = MagicMock(return_value={"chart_data": {}})
+        mock_client_cls.return_value = mock_client
+
+        usage_windows: list[int] = []
+
+        async def _run_executor(func, *args):
+            if func is mock_client.get_usage_data:
+                usage_windows.append(args[2])
+            return func(*args)
+
+        mock_hass.async_add_executor_job = AsyncMock(side_effect=_run_executor)
+
+        await async_setup_entry(mock_hass, mock_config_entry)
+        update_handler = _get_registered_service_handler(mock_hass, "update_statistics")
+
+        await asyncio.gather(
+            update_handler(MagicMock(data={"days_back": 0})),
+            update_handler(MagicMock(data={"days_back": 7})),
+        )
+
+        assert usage_windows == [7]
+        mock_process_chart_data.assert_awaited_once()
+
 
 # ---------------------------------------------------------------------------
 # async_unload_entry

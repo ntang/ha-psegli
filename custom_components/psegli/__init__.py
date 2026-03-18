@@ -81,6 +81,7 @@ _REFRESH_IN_PROGRESS_TASK = "_refresh_in_progress_task"
 _PENDING_AUTH_REFRESH_TASK = "_pending_auth_refresh_task"
 _CAPTCHA_RETRY_TASK = "_captcha_retry_task"
 _STATISTICS_UPDATE_IN_PROGRESS_TASK = "_statistics_update_in_progress_task"
+_STATISTICS_UPDATE_REQUEST = "_statistics_update_request"
 _LAST_EXPIRY_WARNING_AT = "_last_expiry_warning_at"
 
 _AUTH_FAILURE_THRESHOLD = 3
@@ -293,13 +294,26 @@ def _latest_artifact_created_at(payload: dict[str, Any]) -> str | None:
     if not isinstance(items, list):
         return None
 
+    def _parse(created_at: str) -> datetime | None:
+        try:
+            return datetime.fromisoformat(created_at)
+        except ValueError:
+            return None
+
     latest: str | None = None
+    latest_dt: datetime | None = None
     for item in items:
         if not isinstance(item, dict):
             continue
         created_at = item.get("created_at")
-        if isinstance(created_at, str) and (latest is None or created_at > latest):
+        if not isinstance(created_at, str):
+            continue
+        created_at_dt = _parse(created_at)
+        if created_at_dt is None:
+            continue
+        if latest_dt is None or created_at_dt > latest_dt:
             latest = created_at
+            latest_dt = created_at_dt
     return latest
 
 
@@ -1325,8 +1339,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         days_back: int = 0,
         trigger_refresh_on_auth_failure: bool = True,
     ) -> bool:
-        """Single-flight wrapper so overlapping statistics updates share one task."""
+        """Single-flight wrapper so overlapping statistics updates share/coalesce work."""
         in_flight = domain_data.get(_STATISTICS_UPDATE_IN_PROGRESS_TASK)
+        request_state = domain_data.get(_STATISTICS_UPDATE_REQUEST)
         current = asyncio.current_task()
         if in_flight and not in_flight.done():
             if in_flight is current:
@@ -1334,25 +1349,75 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Statistics update requested from active update task; skipping"
                 )
                 return False
+            if isinstance(request_state, dict):
+                if request_state.get("started"):
+                    request_state["rerun_days_back"] = max(
+                        int(request_state.get("rerun_days_back", 0)),
+                        days_back,
+                    )
+                    request_state["rerun_trigger_refresh_on_auth_failure"] = bool(
+                        request_state.get("rerun_trigger_refresh_on_auth_failure", False)
+                        or trigger_refresh_on_auth_failure
+                    )
+                else:
+                    request_state["days_back"] = max(
+                        int(request_state.get("days_back", 0)),
+                        days_back,
+                    )
+                    request_state["trigger_refresh_on_auth_failure"] = bool(
+                        request_state.get("trigger_refresh_on_auth_failure", False)
+                        or trigger_refresh_on_auth_failure
+                    )
             _LOGGER.debug(
                 "Statistics update already in progress; waiting for result (days_back=%d)",
                 days_back,
             )
             return await in_flight
 
-        task = asyncio.create_task(
-            _do_update_statistics_once(
-                hass_ref,
-                days_back=days_back,
-                trigger_refresh_on_auth_failure=trigger_refresh_on_auth_failure,
-            )
-        )
+        request_state = {
+            "days_back": max(0, days_back),
+            "trigger_refresh_on_auth_failure": trigger_refresh_on_auth_failure,
+            "rerun_days_back": 0,
+            "rerun_trigger_refresh_on_auth_failure": False,
+            "started": False,
+        }
+        domain_data[_STATISTICS_UPDATE_REQUEST] = request_state
+
+        async def _run_statistics_update() -> bool:
+            while True:
+                # Allow same-tick overlapping callers to coalesce onto the max days_back.
+                await asyncio.sleep(0)
+                request_state["started"] = True
+                requested_days_back = int(request_state["days_back"])
+                requested_trigger = bool(
+                    request_state["trigger_refresh_on_auth_failure"]
+                )
+                result = await _do_update_statistics_once(
+                    hass_ref,
+                    days_back=requested_days_back,
+                    trigger_refresh_on_auth_failure=requested_trigger,
+                )
+                rerun_days_back = int(request_state.get("rerun_days_back", 0))
+                rerun_trigger = bool(
+                    request_state.get("rerun_trigger_refresh_on_auth_failure", False)
+                )
+                if rerun_days_back <= 0 and not rerun_trigger:
+                    return result
+                request_state["days_back"] = rerun_days_back
+                request_state["trigger_refresh_on_auth_failure"] = rerun_trigger
+                request_state["rerun_days_back"] = 0
+                request_state["rerun_trigger_refresh_on_auth_failure"] = False
+                request_state["started"] = False
+
+        task = asyncio.create_task(_run_statistics_update())
         domain_data[_STATISTICS_UPDATE_IN_PROGRESS_TASK] = task
         try:
             return await task
         finally:
             if domain_data.get(_STATISTICS_UPDATE_IN_PROGRESS_TASK) is task:
                 domain_data.pop(_STATISTICS_UPDATE_IN_PROGRESS_TASK, None)
+            if domain_data.get(_STATISTICS_UPDATE_REQUEST) is request_state:
+                domain_data.pop(_STATISTICS_UPDATE_REQUEST, None)
 
     # Service handler delegates to business logic
     async def async_update_statistics_manual(call: Any) -> None:
@@ -1888,6 +1953,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except Exception as e:
                     _LOGGER.warning("Error cancelling in-flight statistics task: %s", e)
                 domain_data.pop(_STATISTICS_UPDATE_IN_PROGRESS_TASK, None)
+                domain_data.pop(_STATISTICS_UPDATE_REQUEST, None)
 
             # Clear addon connectivity state for a clean next setup.
             domain_data.pop(_SUPERVISOR_DISCOVERED_ADDON_URL, None)
