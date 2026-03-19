@@ -2,18 +2,40 @@
 
 ## Unreleased
 
-- Add persistent debug auto-disable lifecycle control:
+## 2.5.2
+
+- Complete consolidated robustness hardening across integration and add-on:
+  - Close add-on/integration taxonomy gaps with deterministic category mapping
+  - Add `transient_site_error` handling for upstream 5xx/transient failures
+  - Keep category-aware refresh notifications and retry/remediation guidance aligned
+- Add persistent login-failure artifact capture and retrieval:
+  - Store redacted HTML/screenshot artifacts under `/data/login_failures`
+  - Retain latest 10 artifacts with pruning on startup and after new writes
+  - Expose metadata-only `GET /artifacts/login-failures`
+- Extend observability and diagnostics:
+  - Unify `get_status` and diagnostics through one async snapshot builder
+  - Add artifact summary fields: `artifact_count`, `artifact_latest_created_at`, `artifact_list_endpoint`
+  - Keep all existing signal fields intact
+- Finalize CAPTCHA governance:
+  - Preserve retry origin context (for example `captcha_auto_retry_1:manual_service`)
+  - Suppress repeated CAPTCHA notifications in standard mode
+  - Keep retry-attempt notifications in verbose mode
+- Harden scheduler/statistics update behavior:
+  - Add single-flight protection for overlapping statistics updates
+  - Coalesce overlapping `days_back` requests to the larger window
+  - Queue a bounded rerun when a larger `days_back` request arrives mid-flight
+  - Keep incremental backfill decisions UTC-safe across DST boundaries
+- Add persistent debug lifecycle controls to the add-on:
   - New `debug_auto_disable_hours` option (default `0` = disabled)
-  - Auto-disable state persisted under `/data/debug_state.json` (survives restarts)
-  - Runtime `setLevel()` when timer expires — no restart required
-  - New `GET /debug-status` endpoint for programmatic state inspection
-- Add troubleshooting runbook to README:
-  - Failure-category remediation matrix with all canonical categories
-  - Artifact retrieval/listing flow documentation
+  - Persist debug state under `/data/debug_state.json`
+  - Auto-disable debug logging at runtime without restart
+  - Preserve auto-disable state across restart until operator explicitly re-arms debug
+  - Add `GET /debug-status` for programmatic state inspection
+- Expand runbook and release-process documentation:
+  - Failure-category remediation matrix
+  - Artifact retrieval/listing flow
   - Post-stabilization debug-disable procedure
-- Harden release process documentation:
-  - Rollback procedure with incident tracking
-  - Pre-release verification checklist
+  - Rollback procedure and pre-release verification checklist
 
 ## 2.5.1.3
 

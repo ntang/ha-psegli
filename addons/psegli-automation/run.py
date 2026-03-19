@@ -184,7 +184,7 @@ logger = logging.getLogger(__name__)
 # Reconcile config toggle with persisted auto-disable state
 DEBUG_ENABLED = _apply_debug_startup_state(DEBUG_ENABLED, _AUTO_DISABLE_HOURS)
 
-app = FastAPI(title="PSEG Long Island Automation", version="2.5.1.3")
+app = FastAPI(title="PSEG Long Island Automation", version="2.5.2")
 
 # Prevent concurrent login attempts (Playwright can only run one at a time)
 _login_lock = asyncio.Lock()
