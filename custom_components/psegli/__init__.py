@@ -87,6 +87,7 @@ _LAST_EXPIRY_WARNING_AT = "_last_expiry_warning_at"
 _AUTH_FAILURE_THRESHOLD = 3
 _AUTH_FAILURE_REFRESH_DELAY_SECONDS = 10
 _AUTH_FAILURE_NOTIFICATION_COOLDOWN = timedelta(hours=24)
+_STATISTICS_UPDATE_MAX_RERUN_ITERATIONS = 3
 
 # Supervisor discovery cache
 _SUPERVISOR_DISCOVERED_ADDON_URL = "_supervisor_discovered_addon_url"
@@ -1144,6 +1145,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "Refresh already in progress; waiting for result (%s)",
                 trigger_reason,
             )
+            # Yield before awaiting to break synchronous callback chains in
+            # Python 3.14's C-level task wakeup (prevents RecursionError).
+            await asyncio.sleep(0)
             return await in_flight
 
         task = asyncio.create_task(
@@ -1218,14 +1222,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             domain_data[_CAPTCHA_RETRY_TASK] = None
             return
 
+        # Detach from tracking immediately so new tasks can start without
+        # waiting for cancellation to complete.
+        domain_data[_CAPTCHA_RETRY_TASK] = None
         existing.cancel()
+        # Yield before awaiting the cancelled task to break synchronous
+        # callback chains in Python 3.14's C-level task wakeup.
+        await asyncio.sleep(0)
         try:
             await existing
         except asyncio.CancelledError:
             _LOGGER.debug("CAPTCHA retry task cancelled (%s)", reason)
-        finally:
-            if domain_data.get(_CAPTCHA_RETRY_TASK) is existing:
-                domain_data[_CAPTCHA_RETRY_TASK] = None
 
     async def _schedule_captcha_retry(trigger_reason: str) -> None:
         """Schedule delayed CAPTCHA auto-retries after a CAPTCHA failure."""
@@ -1372,6 +1379,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "Statistics update already in progress; waiting for result (days_back=%d)",
                 days_back,
             )
+            # Yield before awaiting to break synchronous callback chains in
+            # Python 3.14's C-level task wakeup (prevents RecursionError).
+            await asyncio.sleep(0)
             return await in_flight
 
         request_state = {
@@ -1384,7 +1394,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         domain_data[_STATISTICS_UPDATE_REQUEST] = request_state
 
         async def _run_statistics_update() -> bool:
-            while True:
+            for _iteration in range(_STATISTICS_UPDATE_MAX_RERUN_ITERATIONS + 1):
                 # Allow same-tick overlapping callers to coalesce onto the max days_back.
                 await asyncio.sleep(0)
                 request_state["started"] = True
@@ -1408,6 +1418,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 request_state["rerun_days_back"] = 0
                 request_state["rerun_trigger_refresh_on_auth_failure"] = False
                 request_state["started"] = False
+            _LOGGER.warning(
+                "Statistics update coalesce loop exceeded %d iterations; returning last result",
+                _STATISTICS_UPDATE_MAX_RERUN_ITERATIONS,
+            )
+            return result
 
         task = asyncio.create_task(_run_statistics_update())
         domain_data[_STATISTICS_UPDATE_IN_PROGRESS_TASK] = task
