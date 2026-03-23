@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.5.2.1
+
+- Fix asyncio RecursionError (stack overflow) under Python 3.14:
+  - Add `await asyncio.sleep(0)` before coalescing `await in_flight` in both
+    `_refresh_cookie_shared` and `_do_update_statistics` to break synchronous
+    C-level task wakeup chains
+  - Bound statistics update coalesce loop to 4 iterations max (was unbounded)
+  - Fix `_cancel_captcha_retry_task` to detach tracking before cancel and yield
+    before awaiting the cancelled task
+
 ## 2.5.2
 
 - Complete consolidated robustness hardening across integration and add-on:
